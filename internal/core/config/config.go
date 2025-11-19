@@ -21,6 +21,7 @@ type Config struct {
 	Storage         StorageConfig
 	Jobs            JobsConfig
 	Auth            AuthConfig
+	Security        SecurityConfig
 }
 
 // OpenAIConfig captures the knobs for the OpenAI provider adapter.
@@ -126,6 +127,17 @@ type Argon2Config struct {
 	KeyLength   uint32
 }
 
+// SecurityConfig captures encryption knobs for user-specific provider sessions.
+type SecurityConfig struct {
+	ProviderSession ProviderSessionSecurityConfig
+}
+
+// ProviderSessionSecurityConfig holds AES key-ring information.
+type ProviderSessionSecurityConfig struct {
+	PrimaryKeyID string
+	Keys         map[string]string
+}
+
 // Load builds a Config from environment variables with sane defaults so the
 // service can boot even when optional variables are missing.
 func Load() Config {
@@ -212,6 +224,12 @@ func Load() Config {
 				KeyLength:   getEnvAsUint32("AUTH_ARGON_KEY_LENGTH", 32),
 			},
 		},
+		Security: SecurityConfig{
+			ProviderSession: ProviderSessionSecurityConfig{
+				PrimaryKeyID: getEnv("PROVIDER_SESSION_PRIMARY_KEY_ID", ""),
+				Keys:         getEnvAsKeyRing("PROVIDER_SESSION_KEYS"),
+			},
+		},
 	}
 }
 
@@ -278,4 +296,31 @@ func getEnvAsUint32(key string, fallback uint32) uint32 {
 		return uint32(value)
 	}
 	return fallback
+}
+
+func getEnvAsKeyRing(key string) map[string]string {
+	raw, ok := os.LookupEnv(key)
+	if !ok || strings.TrimSpace(raw) == "" {
+		return map[string]string{}
+	}
+	entries := strings.Split(raw, ",")
+	result := make(map[string]string)
+	for _, entry := range entries {
+		trimmed := strings.TrimSpace(entry)
+		if trimmed == "" {
+			continue
+		}
+		parts := strings.SplitN(trimmed, ":", 2)
+		if len(parts) != 2 {
+			log.Printf("invalid key ring entry for %s: %s", key, trimmed)
+			continue
+		}
+		id := strings.TrimSpace(parts[0])
+		val := strings.TrimSpace(parts[1])
+		if id == "" || val == "" {
+			continue
+		}
+		result[id] = val
+	}
+	return result
 }

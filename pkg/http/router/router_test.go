@@ -23,7 +23,7 @@ func TestRouterHealthz(t *testing.T) {
 	log := testLogger()
 	healthSvc := &stubHealth{statuses: []health.Status{{Name: "mock", Healthy: true}}}
 	api := handlers.New(log, providermanager.NewManager([]providers.Provider{mockproviders.New("mock")}))
-	r := New(log, healthSvc, api, nil)
+	r := New(log, healthSvc, api, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -45,7 +45,7 @@ func TestRouterHealthz(t *testing.T) {
 }
 
 func TestRouterDocs(t *testing.T) {
-	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil)), nil)
+	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil)), nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -61,7 +61,7 @@ func TestRouterOpenAPI(t *testing.T) {
 	oldPath := openAPIPath
 	t.Cleanup(func() { openAPIPath = oldPath })
 	openAPIPath = filepath.Join("..", "..", "..", "openapi.yaml")
-	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil)), nil)
+	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil)), nil, nil, nil)
 	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -82,6 +82,29 @@ func TestWriteJSONEncodeError(t *testing.T) {
 	writeJSON(fw, testLogger(), http.StatusOK, map[string]any{"chan": make(chan int)})
 	if fw.status != http.StatusOK {
 		t.Fatalf("expected status written")
+	}
+}
+
+func TestProviderSessionRoutesRequireAuth(t *testing.T) {
+	called := false
+	sessionHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	authMiddleware := func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusUnauthorized)
+		})
+	}
+	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil)), nil, sessionHandler, authMiddleware)
+	req := httptest.NewRequest(http.MethodGet, "/providers/openai/session", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", rec.Code)
+	}
+	if called {
+		t.Fatalf("handler should not run when auth middleware denies request")
 	}
 }
 

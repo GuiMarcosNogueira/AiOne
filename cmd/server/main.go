@@ -24,11 +24,19 @@ import (
 	"github.com/midia/aione/internal/services/auth"
 	healthsvc "github.com/midia/aione/internal/services/health"
 	providermanager "github.com/midia/aione/internal/services/provider"
+	"github.com/midia/aione/internal/services/providersessions"
 	"github.com/midia/aione/internal/services/users"
+	"github.com/midia/aione/pkg/encryption"
 	httprouter "github.com/midia/aione/pkg/http/router"
 )
 
 var notifyContext = signal.NotifyContext
+
+type authComponents struct {
+	AuthAPI    *apihandlers.AuthAPI
+	SessionAPI *apihandlers.ProviderSessionAPI
+	Middleware func(http.Handler) http.Handler
+}
 
 func main() {
 	cfg := config.Load()
@@ -36,13 +44,24 @@ func main() {
 
 	log.Info("starting AI aggregator backend")
 
-	authHandlers, cleanupAuth, err := initAuth(context.Background(), log, cfg)
+	modules, cleanupAuth, err := initAuth(context.Background(), log, cfg)
 	if err != nil {
 		log.Error("auth initialization failed", "error", err)
 		return
 	}
 	if cleanupAuth != nil {
 		defer cleanupAuth()
+	}
+
+	var authHandlers *apihandlers.AuthAPI
+	var sessionHandler http.Handler
+	var authMiddleware func(http.Handler) http.Handler
+	if modules != nil {
+		authHandlers = modules.AuthAPI
+		if modules.SessionAPI != nil {
+			sessionHandler = modules.SessionAPI.Handler()
+		}
+		authMiddleware = modules.Middleware
 	}
 
 	providersSet := registerProviders(cfg, log)
@@ -70,7 +89,7 @@ func main() {
 	apiHandlers := apihandlers.New(log, providerManager)
 
 	healthService := healthsvc.NewService(providersSet)
-	router := httprouter.New(log, healthService, apiHandlers, authHandlers)
+	router := httprouter.New(log, healthService, apiHandlers, authHandlers, sessionHandler, authMiddleware)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.HTTPPort,
@@ -160,7 +179,7 @@ func registerProviders(cfg config.Config, log *slog.Logger) []providers.Provider
 	return list
 }
 
-func initAuth(ctx context.Context, log *slog.Logger, cfg config.Config) (*apihandlers.AuthAPI, func(), error) {
+func initAuth(ctx context.Context, log *slog.Logger, cfg config.Config) (*authComponents, func(), error) {
 	missing := []string{}
 	if strings.TrimSpace(cfg.Database.URL) == "" {
 		missing = append(missing, "DATABASE_URL")
@@ -233,7 +252,30 @@ func initAuth(ctx context.Context, log *slog.Logger, cfg config.Config) (*apihan
 	}
 
 	cleanup := func() { runCleanup(cleanupFns) }
-	return apihandlers.NewAuthAPI(log, authService, rateLimiter), cleanup, nil
+	var sessionAPI *apihandlers.ProviderSessionAPI
+	if cfg.Security.ProviderSession.PrimaryKeyID == "" || len(cfg.Security.ProviderSession.Keys) == 0 {
+		log.Warn("provider session endpoints disabled", "reason", "missing encryption key config")
+	} else {
+		sessionRepo := providersessions.NewPostgresRepository(dbConn)
+		encMgr, err := encryption.NewManager(cfg.Security.ProviderSession.PrimaryKeyID, cfg.Security.ProviderSession.Keys)
+		if err != nil {
+			log.Error("failed to initialize provider session encryption", slog.Any("error", err))
+		} else {
+			sessionService, err := providersessions.NewService(sessionRepo, encMgr)
+			if err != nil {
+				log.Error("failed to initialize provider session service", slog.Any("error", err))
+			} else {
+				sessionAPI = apihandlers.NewProviderSessionAPI(log, sessionService)
+			}
+		}
+	}
+
+	components := &authComponents{
+		AuthAPI:    apihandlers.NewAuthAPI(log, authService, rateLimiter),
+		SessionAPI: sessionAPI,
+		Middleware: auth.AuthMiddleware(tokenManager),
+	}
+	return components, cleanup, nil
 }
 
 func runCleanup(funcs []func()) {

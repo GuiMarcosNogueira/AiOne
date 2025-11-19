@@ -9,6 +9,7 @@ Backend skeleton in Go following Clean Architecture conventions to fan-out reque
 - Clean layering: `internal/core` (config/logging), `internal/services` (domain logic), `internal/providers` (provider ports/adapters), `pkg/http` (delivery layer).
 - Real adapters for OpenAI and Google Gemini (text, multimodal, image, video, ASR, embeddings) plus mock providers for local testing.
 - Optional Argon2id + JWT authentication stack (register/login/refresh/logout) backed by Postgres, Redis sessions and a login rate limiter.
+- Encrypted per-user provider sessions that store upstream API keys securely with AES-256-GCM.
 
 ## Quickstart
 
@@ -82,6 +83,27 @@ With those values set the server exposes:
 - `POST /auth/logout` – revoke the provided refresh token/session.
 
 Access tokens are standard JWTs signed with `AUTH_ACCESS_SECRET`. Refresh tokens are JWTs bound to a Redis session entry, so logout/refresh rotation invalidates stolen tokens immediately.
+
+## Provider-specific sessions (optional)
+
+Users can store their own API keys for each upstream provider without exposing them to other accounts. The API keeps those secrets encrypted at rest via AES-256-GCM.
+
+1. Apply migration `migrations/002_user_provider_sessions.sql` after the auth tables:
+	```bash
+	psql "$DATABASE_URL" -f migrations/002_user_provider_sessions.sql
+	```
+2. Generate at least one 32-byte key (base64-encoded) to build a key ring, then point the service at it via:
+	```dotenv
+	PROVIDER_SESSION_PRIMARY_KEY_ID=2025-01-rot
+	PROVIDER_SESSION_KEYS=2025-01-rot:5kP2gAa2wQ3jG3Y0v2wR8byS0b7fQeLNE5Hk2N1QWz4=
+	```
+	To rotate keys, append more comma-separated `id:key` pairs to `PROVIDER_SESSION_KEYS` and move `PROVIDER_SESSION_PRIMARY_KEY_ID` to the new entry once every instance is updated.
+3. With those vars set, the authenticated routes become available under `/providers/{provider}`:
+	- `POST /providers/{provider}/set-key` &rarr; stores/updates the user's key (body accepts `provider_key`, optional `metadata`, `expires_at`).
+	- `GET /providers/{provider}/session` &rarr; retrieves the decrypted key + usage metadata for that provider.
+	- `DELETE /providers/{provider}/session/reset` &rarr; wipes the stored key and usage counters.
+
+All endpoints require a valid access token and run behind the existing auth middleware, so each user can only touch their own sessions.
 
 ## Generic HTTP providers
 
