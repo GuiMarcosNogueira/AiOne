@@ -68,11 +68,12 @@ func TestTruncateHistoryToTokenLimit(t *testing.T) {
 		{ID: 3, UserID: "user", ProviderName: "openai", TokensEstimated: 2, CreatedAt: time.Now()},
 	}
 	svc, _ := NewService(repo, nil)
-	if err := svc.TruncateHistoryToTokenLimit(context.Background(), "user", "openai", 7); err != nil {
+	removed, err := svc.TruncateHistoryToTokenLimit(context.Background(), "user", "openai", 7)
+	if err != nil {
 		t.Fatalf("truncate: %v", err)
 	}
-	if len(repo.deletedIDs) == 0 {
-		t.Fatalf("expected some entries removed")
+	if removed == 0 || len(repo.deletedIDs) == 0 {
+		t.Fatalf("expected some entries removed, removed=%d ids=%v", removed, repo.deletedIDs)
 	}
 }
 

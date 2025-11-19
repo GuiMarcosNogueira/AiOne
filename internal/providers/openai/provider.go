@@ -151,7 +151,7 @@ func (p *Provider) Health(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	p.authorize(req)
+	p.authorize(ctx, req)
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return err
@@ -249,7 +249,7 @@ func (p *Provider) SpeechToText(ctx context.Context, req dto.STTReq) (dto.STTRes
 	if err != nil {
 		return dto.STTResp{}, err
 	}
-	p.authorize(reqBody)
+	p.authorize(ctx, reqBody)
 	reqBody.Header.Set("Content-Type", writer.FormDataContentType())
 	resp, err := p.httpClient.Do(reqBody)
 	if err != nil {
@@ -319,8 +319,15 @@ func (p *Provider) endpoint(path string) string {
 	return p.baseURL + path
 }
 
-func (p *Provider) authorize(req *http.Request) {
-	req.Header.Set("Authorization", "Bearer "+p.cfg.APIKey)
+func (p *Provider) authorize(ctx context.Context, req *http.Request) {
+	key := p.cfg.APIKey
+	if override := providers.APIKeyFromContext(ctx); override != "" {
+		key = override
+	}
+	if strings.TrimSpace(key) == "" {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
 }
 
 func (p *Provider) doJSON(ctx context.Context, method, relPath string, payload any, target any) error {
@@ -336,7 +343,7 @@ func (p *Provider) doJSON(ctx context.Context, method, relPath string, payload a
 	if err != nil {
 		return err
 	}
-	p.authorize(req)
+	p.authorize(ctx, req)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := p.httpClient.Do(req)
 	if err != nil {

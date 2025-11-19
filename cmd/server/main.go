@@ -26,6 +26,7 @@ import (
 	"github.com/midia/aione/internal/services/history"
 	providermanager "github.com/midia/aione/internal/services/provider"
 	"github.com/midia/aione/internal/services/providersessions"
+	"github.com/midia/aione/internal/services/session"
 	"github.com/midia/aione/internal/services/storage"
 	"github.com/midia/aione/internal/services/users"
 	"github.com/midia/aione/pkg/encryption"
@@ -39,6 +40,7 @@ type authComponents struct {
 	SessionAPI *apihandlers.ProviderSessionAPI
 	HistoryAPI *apihandlers.HistoryAPI
 	HistorySvc *history.Service
+	SessionSvc *providersessions.Service
 	Middleware func(http.Handler) http.Handler
 }
 
@@ -61,6 +63,7 @@ func main() {
 	var sessionHandler http.Handler
 	var historyHandler http.Handler
 	var historySvc *history.Service
+	var conversationHandler http.Handler
 	var authMiddleware func(http.Handler) http.Handler
 	if modules != nil {
 		authHandlers = modules.AuthAPI
@@ -98,8 +101,17 @@ func main() {
 	providerManager := providermanager.NewManager(providersSet, managerOpts...)
 	apiHandlers := apihandlers.New(log, providerManager, historySvc)
 
+	if modules != nil && modules.SessionSvc != nil && historySvc != nil {
+		conversationSvc, err := session.NewService(log, providerManager, modules.SessionSvc, historySvc)
+		if err != nil {
+			log.Error("failed to initialize session conversation service", "error", err)
+		} else {
+			conversationHandler = apihandlers.NewSessionAPI(log, conversationSvc).Handler()
+		}
+	}
+
 	healthService := healthsvc.NewService(providersSet)
-	router := httprouter.New(log, healthService, apiHandlers, authHandlers, sessionHandler, historyHandler, authMiddleware)
+	router := httprouter.New(log, healthService, apiHandlers, authHandlers, sessionHandler, historyHandler, conversationHandler, authMiddleware)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.HTTPPort,
@@ -263,6 +275,7 @@ func initAuth(ctx context.Context, log *slog.Logger, cfg config.Config) (*authCo
 
 	cleanup := func() { runCleanup(cleanupFns) }
 	var sessionAPI *apihandlers.ProviderSessionAPI
+	var sessionSvc *providersessions.Service
 	var historyAPI *apihandlers.HistoryAPI
 	var historySvc *history.Service
 	if cfg.Security.ProviderSession.PrimaryKeyID == "" || len(cfg.Security.ProviderSession.Keys) == 0 {
@@ -277,6 +290,7 @@ func initAuth(ctx context.Context, log *slog.Logger, cfg config.Config) (*authCo
 			if err != nil {
 				log.Error("failed to initialize provider session service", slog.Any("error", err))
 			} else {
+				sessionSvc = sessionService
 				sessionAPI = apihandlers.NewProviderSessionAPI(log, sessionService)
 			}
 		}
@@ -295,6 +309,7 @@ func initAuth(ctx context.Context, log *slog.Logger, cfg config.Config) (*authCo
 		SessionAPI: sessionAPI,
 		HistoryAPI: historyAPI,
 		HistorySvc: historySvc,
+		SessionSvc: sessionSvc,
 		Middleware: auth.AuthMiddleware(tokenManager),
 	}
 	return components, cleanup, nil

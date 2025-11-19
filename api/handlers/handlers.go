@@ -13,6 +13,7 @@ import (
 	"github.com/midia/aione/internal/services/auth"
 	"github.com/midia/aione/internal/services/history"
 	providermanager "github.com/midia/aione/internal/services/provider"
+	"github.com/midia/aione/internal/services/providersessions"
 )
 
 // API wires HTTP handlers to the provider manager.
@@ -180,9 +181,10 @@ func (a *API) writeJSON(w http.ResponseWriter, status int, payload responseEnvel
 }
 
 type responseEnvelope struct {
-	Provider string `json:"provider,omitempty"`
-	Data     any    `json:"data,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Provider string                           `json:"provider,omitempty"`
+	Data     any                              `json:"data,omitempty"`
+	Session  *providersessions.SessionDetails `json:"session,omitempty"`
+	Error    string                           `json:"error,omitempty"`
 }
 
 func applyProviderOverride(ctx context.Context, req any) context.Context {
@@ -199,7 +201,7 @@ func applyProviderOverride(ctx context.Context, req any) context.Context {
 func (a *API) applyHistoryContext(ctx context.Context, req *dto.TextReq, userID, provider string, maxTokens int) {
 	limit := a.historyBudget(provider, maxTokens)
 	if limit > 0 {
-		if err := a.history.TruncateHistoryToTokenLimit(ctx, userID, provider, limit); err != nil {
+		if _, err := a.history.TruncateHistoryToTokenLimit(ctx, userID, provider, limit); err != nil {
 			a.log.Warn("failed to truncate history", slog.Any("error", err))
 		}
 	}
@@ -240,7 +242,7 @@ func (a *API) recordChatTurns(ctx context.Context, userID, providerHint, provide
 		}
 	}
 	if limit := a.historyBudget(provider, maxTokens); limit > 0 {
-		if err := a.history.TruncateHistoryToTokenLimit(ctx, userID, provider, limit); err != nil {
+		if _, err := a.history.TruncateHistoryToTokenLimit(ctx, userID, provider, limit); err != nil {
 			a.log.Warn("failed to enforce history limit", slog.Any("error", err))
 		}
 	}

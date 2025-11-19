@@ -125,6 +125,30 @@ Every call to `POST /v1/chat` now:
 - Saves the user prompt plus the provider reply back into the history table.
 - Truncates the stored history when its estimated token sum would exceed the provider's published `max_text_tokens` (or the request `max_tokens`, whichever is lower).
 
+## Session-scoped messaging endpoints
+
+When both provider sessions and chat history are enabled you can send provider-specific prompts via the `/session/{provider}/*` routes. Each call automatically loads/truncates the user's history, injects it into the outgoing request, and refreshes the persisted session counters.
+
+- `POST /session/{provider}/message` &rarr; send a text prompt and receive the assistant reply.
+- `POST /session/{provider}/image` &rarr; request image generation tied to the user's provider key.
+- `POST /session/{provider}/video` &rarr; trigger video generation.
+- `POST /session/{provider}/audio` &rarr; transcribe audio while tracking session usage.
+
+All endpoints expect the same auth token used elsewhere plus a JSON payload. `provider_key` is optional and only required the first time a user calls a provider if they have not stored a key yet.
+
+```json
+POST /session/openai/message
+{
+	"prompt": "Summarize the following:",
+	"max_tokens": 256,
+	"temperature": 0.4,
+	"provider_key": "sk-user-override",
+	"session_metadata": {"team": "alpha"}
+}
+```
+
+Responses always include the upstream payload plus the refreshed session object so the client can keep track of `total_tokens_used`, `last_interaction`, and any metadata updates.
+
 ## Generic HTTP providers
 
 You can plug in additional upstreams without touching Go code by dropping JSON/YAML files under `internal/providers/config` (override the directory with `GENERIC_PROVIDER_CONFIG_DIR`). Each file describes:

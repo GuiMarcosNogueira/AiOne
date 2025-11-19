@@ -288,6 +288,114 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '500':
           $ref: '#/components/responses/InternalError'
+  /session/{provider}/message:
+    post:
+      summary: Send a session-scoped text message using the user's stored provider key.
+      tags: [sessions]
+      parameters:
+        - $ref: '#/components/parameters/SessionProviderParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionMessageReq'
+      responses:
+        '200':
+          description: Provider response plus refreshed session metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionTextRespEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /session/{provider}/image:
+    post:
+      summary: Generate an image while tracking the user's provider session state.
+      tags: [sessions]
+      parameters:
+        - $ref: '#/components/parameters/SessionProviderParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionImageReq'
+      responses:
+        '200':
+          description: Image result and updated session counters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionImageRespEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /session/{provider}/video:
+    post:
+      summary: Generate a video artifact while preserving the user's session usage.
+      tags: [sessions]
+      parameters:
+        - $ref: '#/components/parameters/SessionProviderParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionVideoReq'
+      responses:
+        '200':
+          description: Video result plus session metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionVideoRespEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+  /session/{provider}/audio:
+    post:
+      summary: Transcribe audio using the user's provider session.
+      tags: [sessions]
+      parameters:
+        - $ref: '#/components/parameters/SessionProviderParam'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionAudioReq'
+      responses:
+        '200':
+          description: Transcript plus refreshed session tokens
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionAudioRespEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
 components:
   parameters:
     StrategyParam:
@@ -298,6 +406,13 @@ components:
       schema:
         type: string
         enum: [first, fast, cheap, bestOf]
+    SessionProviderParam:
+      name: provider
+      in: path
+      description: Target provider identifier tied to the user's session.
+      required: true
+      schema:
+        type: string
   responses:
     BadRequest:
       description: Invalid request payload
@@ -519,6 +634,84 @@ components:
           type: boolean
         reason:
           type: string
+    SessionBase:
+      type: object
+      properties:
+        provider_key:
+          type: string
+          description: Optional API key used to bootstrap the session if no secret is stored yet.
+        session_metadata:
+          type: object
+          additionalProperties: true
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+      additionalProperties: false
+    SessionMessageReq:
+      allOf:
+        - $ref: '#/components/schemas/SessionBase'
+        - type: object
+          properties:
+            prompt:
+              type: string
+            max_tokens:
+              type: integer
+            temperature:
+              type: number
+              format: float
+          required: [prompt]
+    SessionImageReq:
+      allOf:
+        - $ref: '#/components/schemas/SessionBase'
+        - type: object
+          properties:
+            prompt:
+              type: string
+            size:
+              type: string
+          required: [prompt]
+    SessionVideoReq:
+      allOf:
+        - $ref: '#/components/schemas/SessionBase'
+        - type: object
+          properties:
+            prompt:
+              type: string
+            duration_seconds:
+              type: integer
+          required: [prompt]
+    SessionAudioReq:
+      allOf:
+        - $ref: '#/components/schemas/SessionBase'
+        - type: object
+          properties:
+            audio_url:
+              type: string
+              format: uri
+            language:
+              type: string
+          required: [audio_url]
+    SessionDetails:
+      type: object
+      properties:
+        provider_name:
+          type: string
+        provider_key:
+          type: string
+        last_interaction:
+          type: string
+          format: date-time
+        total_tokens_used:
+          type: integer
+        expires_at:
+          type: string
+          format: date-time
+          nullable: true
+        metadata:
+          type: object
+          additionalProperties: true
+      required: [provider_name, provider_key, last_interaction, total_tokens_used, metadata]
     ProvidersResp:
       type: object
       properties:
@@ -656,6 +849,46 @@ components:
         data:
           $ref: '#/components/schemas/ModerationResp'
       required: [provider, data]
+    SessionTextRespEnvelope:
+      type: object
+      properties:
+        provider:
+          type: string
+        data:
+          $ref: '#/components/schemas/TextResp'
+        session:
+          $ref: '#/components/schemas/SessionDetails'
+      required: [provider, data, session]
+    SessionImageRespEnvelope:
+      type: object
+      properties:
+        provider:
+          type: string
+        data:
+          $ref: '#/components/schemas/ImageResp'
+        session:
+          $ref: '#/components/schemas/SessionDetails'
+      required: [provider, data, session]
+    SessionVideoRespEnvelope:
+      type: object
+      properties:
+        provider:
+          type: string
+        data:
+          $ref: '#/components/schemas/VideoResp'
+        session:
+          $ref: '#/components/schemas/SessionDetails'
+      required: [provider, data, session]
+    SessionAudioRespEnvelope:
+      type: object
+      properties:
+        provider:
+          type: string
+        data:
+          $ref: '#/components/schemas/STTResp'
+        session:
+          $ref: '#/components/schemas/SessionDetails'
+      required: [provider, data, session]
     ProvidersRespEnvelope:
       type: object
       properties:

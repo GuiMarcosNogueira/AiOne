@@ -155,7 +155,7 @@ func (p *Provider) Health(ctx context.Context) error {
 		return err
 	}
 	p.applyHeaders(req, nil)
-	p.applyAuth(req)
+	p.applyAuth(ctx, req)
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return err
@@ -314,7 +314,7 @@ func (h *endpointHandler) call(ctx context.Context, p *Provider, req any) (any, 
 	if contentType != "" {
 		httpReq.Header.Set("Content-Type", contentType)
 	}
-	p.applyAuth(httpReq)
+	p.applyAuth(reqCtx, httpReq)
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
@@ -398,8 +398,44 @@ func (p *Provider) applyHeaders(req *http.Request, extra map[string]string) {
 	}
 }
 
-func (p *Provider) applyAuth(req *http.Request) {
+func (p *Provider) applyAuth(ctx context.Context, req *http.Request) {
 	authType := strings.ToLower(strings.TrimSpace(p.auth.Type))
+	override := strings.TrimSpace(providers.APIKeyFromContext(ctx))
+	if override != "" {
+		switch authType {
+		case "bearer":
+			prefix := strings.TrimSpace(p.auth.Prefix)
+			if prefix == "" {
+				prefix = "Bearer"
+			}
+			req.Header.Set("Authorization", fmt.Sprintf("%s %s", prefix, override))
+		case "apikey", "api_key":
+			location := strings.ToLower(strings.TrimSpace(p.auth.In))
+			name := p.auth.Name
+			if name == "" {
+				name = "X-API-Key"
+			}
+			value := strings.TrimSpace(strings.Join([]string{strings.TrimSpace(p.auth.Prefix), override}, " "))
+			if location == "query" {
+				q := req.URL.Query()
+				q.Set(name, value)
+				req.URL.RawQuery = q.Encode()
+			} else {
+				req.Header.Set(name, value)
+			}
+		case "basic":
+			parts := strings.SplitN(override, ":", 2)
+			username := parts[0]
+			password := ""
+			if len(parts) > 1 {
+				password = parts[1]
+			}
+			req.SetBasicAuth(username, password)
+		default:
+			req.Header.Set("Authorization", override)
+		}
+		return
+	}
 	switch authType {
 	case "bearer":
 		token := p.auth.resolveValue()
@@ -422,7 +458,6 @@ func (p *Provider) applyAuth(req *http.Request) {
 			name = "X-API-Key"
 		}
 		value = strings.TrimSpace(strings.Join([]string{strings.TrimSpace(p.auth.Prefix), value}, " "))
-		value = strings.TrimSpace(value)
 		if location == "query" {
 			q := req.URL.Query()
 			q.Set(name, value)

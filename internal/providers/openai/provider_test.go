@@ -58,7 +58,7 @@ func TestAuthorizeAndEndpointHelpers(t *testing.T) {
 		t.Fatalf("new provider: %v", err)
 	}
 	req, _ := http.NewRequest(http.MethodGet, "http://example", nil)
-	prov.(*Provider).authorize(req)
+	prov.(*Provider).authorize(context.Background(), req)
 	if got := req.Header.Get("Authorization"); got != "Bearer token" {
 		t.Fatalf("unexpected auth header %s", got)
 	}

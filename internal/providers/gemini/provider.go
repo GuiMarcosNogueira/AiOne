@@ -380,7 +380,13 @@ func (p *Provider) doJSON(ctx context.Context, method, relPath string, query url
 		if payload != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
-		req.Header.Set("X-Goog-Api-Key", p.cfg.APIKey)
+		key := p.cfg.APIKey
+		if override := providers.APIKeyFromContext(ctx); override != "" {
+			key = override
+		}
+		if strings.TrimSpace(key) != "" {
+			req.Header.Set("X-Goog-Api-Key", key)
+		}
 		resp, err := p.httpClient.Do(req)
 		if err != nil {
 			lastErr = err

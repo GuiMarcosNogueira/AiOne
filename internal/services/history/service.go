@@ -108,16 +108,17 @@ func (s *Service) DeleteHistory(ctx context.Context, userID, provider string) er
 }
 
 // TruncateHistoryToTokenLimit removes the oldest messages until the total estimated tokens fits within limit.
-func (s *Service) TruncateHistoryToTokenLimit(ctx context.Context, userID, provider string, limit int) error {
+// It returns how many entries were deleted.
+func (s *Service) TruncateHistoryToTokenLimit(ctx context.Context, userID, provider string, limit int) (int, error) {
 	if err := validateUserProvider(userID, provider); err != nil {
-		return err
+		return 0, err
 	}
 	if limit <= 0 {
-		return nil
+		return 0, nil
 	}
 	entries, err := s.repo.List(ctx, userID, strings.ToLower(strings.TrimSpace(provider)))
 	if err != nil {
-		return err
+		return 0, err
 	}
 	total := 0
 	toDelete := make([]int64, 0)
@@ -129,9 +130,12 @@ func (s *Service) TruncateHistoryToTokenLimit(ctx context.Context, userID, provi
 		}
 	}
 	if len(toDelete) == 0 {
-		return nil
+		return 0, nil
 	}
-	return s.repo.DeleteIDs(ctx, toDelete)
+	if err := s.repo.DeleteIDs(ctx, toDelete); err != nil {
+		return 0, err
+	}
+	return len(toDelete), nil
 }
 
 // EstimateTokens approximates the number of tokens in a string using a simple heuristic.
