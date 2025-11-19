@@ -10,6 +10,7 @@ Backend skeleton in Go following Clean Architecture conventions to fan-out reque
 - Real adapters for OpenAI and Google Gemini (text, multimodal, image, video, ASR, embeddings) plus mock providers for local testing.
 - Optional Argon2id + JWT authentication stack (register/login/refresh/logout) backed by Postgres, Redis sessions and a login rate limiter.
 - Encrypted per-user provider sessions that store upstream API keys securely with AES-256-GCM.
+- Authenticated chat history per user/provider so text prompts can be replayed and truncated to model limits automatically.
 
 ## Quickstart
 
@@ -104,6 +105,25 @@ Users can store their own API keys for each upstream provider without exposing t
 	- `DELETE /providers/{provider}/session/reset` &rarr; wipes the stored key and usage counters.
 
 All endpoints require a valid access token and run behind the existing auth middleware, so each user can only touch their own sessions.
+
+## Chat history (optional)
+
+When authentication is enabled the API can remember recent chat turns per user/provider. The stored context is injected into `POST /v1/chat` requests and truncated automatically so the provider's `max_text_tokens` budget is not exceeded.
+
+1. Apply `migrations/003_user_context_history.sql` after the provider-session tables:
+	```bash
+	psql "$DATABASE_URL" -f migrations/003_user_context_history.sql
+	```
+2. Ensure uploads have a writable location (defaults to the existing `UPLOAD_DIR` used by the storage service). Media references saved through `SaveMedia` are stored on disk and only the path is kept in the database.
+3. Once the migration is applied and auth is on, the following endpoints become available behind the auth middleware:
+	- `GET /history/{provider}` – returns the ordered `UserContextHistory` entries for that provider.
+	- `DELETE /history/{provider}/clear` – removes every entry for that provider/user pair.
+
+Every call to `POST /v1/chat` now:
+
+- Loads the persisted context (if any) for the preferred/provider override before contacting the upstream provider.
+- Saves the user prompt plus the provider reply back into the history table.
+- Truncates the stored history when its estimated token sum would exceed the provider's published `max_text_tokens` (or the request `max_tokens`, whichever is lower).
 
 ## Generic HTTP providers
 

@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"log/slog"
 
 	"github.com/midia/aione/internal/providers/dto"
+	"github.com/midia/aione/internal/services/auth"
+	"github.com/midia/aione/internal/services/history"
 	providermanager "github.com/midia/aione/internal/services/provider"
 )
 
@@ -16,17 +19,27 @@ import (
 type API struct {
 	log     *slog.Logger
 	manager *providermanager.Manager
+	history *history.Service
 }
 
 // New creates an API handler bundle.
-func New(log *slog.Logger, manager *providermanager.Manager) *API {
-	return &API{log: log, manager: manager}
+func New(log *slog.Logger, manager *providermanager.Manager, historySvc *history.Service) *API {
+	return &API{log: log, manager: manager, history: historySvc}
 }
 
 // Chat handles POST /v1/chat requests.
 func (a *API) Chat(w http.ResponseWriter, r *http.Request) {
+	userID := claimsUserID(r.Context())
 	handlePost(a, w, r, func(ctx context.Context, req dto.TextReq) (any, string, error) {
+		originalPrompt := req.Prompt
+		providerOverride := strings.ToLower(strings.TrimSpace(req.PreferredProvider()))
+		if userID != "" && a.history != nil && providerOverride != "" {
+			a.applyHistoryContext(ctx, &req, userID, providerOverride, req.MaxTokens)
+		}
 		res, err := a.manager.TextGenerate(ctx, req)
+		if err == nil && userID != "" && a.history != nil {
+			a.recordChatTurns(ctx, userID, providerOverride, res.Provider, originalPrompt, res.Data.Content, req.MaxTokens)
+		}
 		return res.Data, res.Provider, err
 	})
 }
@@ -181,4 +194,77 @@ func applyProviderOverride(ctx context.Context, req any) context.Context {
 		return providermanager.ContextWithProvider(ctx, name)
 	}
 	return ctx
+}
+
+func (a *API) applyHistoryContext(ctx context.Context, req *dto.TextReq, userID, provider string, maxTokens int) {
+	limit := a.historyBudget(provider, maxTokens)
+	if limit > 0 {
+		if err := a.history.TruncateHistoryToTokenLimit(ctx, userID, provider, limit); err != nil {
+			a.log.Warn("failed to truncate history", slog.Any("error", err))
+		}
+	}
+	entries, err := a.history.ListHistory(ctx, userID, provider)
+	if err != nil {
+		a.log.Warn("failed to load history", slog.Any("error", err))
+		return
+	}
+	if prompt := history.FormatContext(entries); prompt != "" {
+		req.Prompt = prompt + "\nUSER: " + req.Prompt
+	}
+}
+
+func (a *API) recordChatTurns(ctx context.Context, userID, providerHint, providerUsed, prompt, reply string, maxTokens int) {
+	provider := strings.TrimSpace(providerUsed)
+	if provider == "" {
+		provider = strings.TrimSpace(providerHint)
+	}
+	if provider == "" {
+		return
+	}
+	if _, err := a.history.SaveMessage(ctx, history.SaveMessageInput{
+		UserID:       userID,
+		ProviderName: provider,
+		Role:         "user",
+		Message:      prompt,
+	}); err != nil {
+		a.log.Warn("failed to save user history", slog.Any("error", err))
+	}
+	if strings.TrimSpace(reply) != "" {
+		if _, err := a.history.SaveMessage(ctx, history.SaveMessageInput{
+			UserID:       userID,
+			ProviderName: provider,
+			Role:         "assistant",
+			Message:      reply,
+		}); err != nil {
+			a.log.Warn("failed to save assistant history", slog.Any("error", err))
+		}
+	}
+	if limit := a.historyBudget(provider, maxTokens); limit > 0 {
+		if err := a.history.TruncateHistoryToTokenLimit(ctx, userID, provider, limit); err != nil {
+			a.log.Warn("failed to enforce history limit", slog.Any("error", err))
+		}
+	}
+}
+
+func (a *API) historyBudget(provider string, maxTokens int) int {
+	if a.manager == nil {
+		return 0
+	}
+	caps, ok := a.manager.CapabilitiesFor(provider)
+	if !ok || caps.Limits.MaxTextTokens <= 0 {
+		return 0
+	}
+	budget := caps.Limits.MaxTextTokens
+	if maxTokens > 0 && maxTokens < budget {
+		budget -= maxTokens
+	}
+	return budget
+}
+
+func claimsUserID(ctx context.Context) string {
+	claims, ok := auth.ClaimsFromContext(ctx)
+	if !ok {
+		return ""
+	}
+	return claims.UserID
 }

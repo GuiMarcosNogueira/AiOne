@@ -133,7 +133,7 @@ func TestProvidersMethodNotAllowed(t *testing.T) {
 }
 
 func TestHandlePostErrorFlow(t *testing.T) {
-	api := New(testLogger(), nil)
+	api := New(testLogger(), nil, nil)
 	req := httptest.NewRequest(http.MethodPost, "/v1/test", strings.NewReader(`{"prompt":"p"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -169,7 +169,7 @@ func newTestAPI() *API {
 	log := testLogger()
 	providers := []providers.Provider{mockproviders.New("mock-openai")}
 	manager := providermanager.NewManager(providers)
-	return New(log, manager)
+	return New(log, manager, nil)
 }
 
 func testLogger() *slog.Logger {

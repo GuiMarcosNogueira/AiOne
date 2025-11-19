@@ -341,6 +341,15 @@ func (m *Manager) providerByName(name string) *providerState {
 	return nil
 }
 
+// CapabilitiesFor returns the capability metadata for the named provider.
+func (m *Manager) CapabilitiesFor(name string) (providers.Capabilities, bool) {
+	state := m.providerByName(name)
+	if state == nil {
+		return providers.Capabilities{}, false
+	}
+	return state.caps, true
+}
+
 func (m *Manager) sortCandidates(strategy Strategy, list []*providerState) {
 	switch strategy {
 	case StrategyFast:

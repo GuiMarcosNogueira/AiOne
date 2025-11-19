@@ -23,8 +23,10 @@ import (
 	openaiprovider "github.com/midia/aione/internal/providers/openai"
 	"github.com/midia/aione/internal/services/auth"
 	healthsvc "github.com/midia/aione/internal/services/health"
+	"github.com/midia/aione/internal/services/history"
 	providermanager "github.com/midia/aione/internal/services/provider"
 	"github.com/midia/aione/internal/services/providersessions"
+	"github.com/midia/aione/internal/services/storage"
 	"github.com/midia/aione/internal/services/users"
 	"github.com/midia/aione/pkg/encryption"
 	httprouter "github.com/midia/aione/pkg/http/router"
@@ -35,6 +37,8 @@ var notifyContext = signal.NotifyContext
 type authComponents struct {
 	AuthAPI    *apihandlers.AuthAPI
 	SessionAPI *apihandlers.ProviderSessionAPI
+	HistoryAPI *apihandlers.HistoryAPI
+	HistorySvc *history.Service
 	Middleware func(http.Handler) http.Handler
 }
 
@@ -55,12 +59,18 @@ func main() {
 
 	var authHandlers *apihandlers.AuthAPI
 	var sessionHandler http.Handler
+	var historyHandler http.Handler
+	var historySvc *history.Service
 	var authMiddleware func(http.Handler) http.Handler
 	if modules != nil {
 		authHandlers = modules.AuthAPI
 		if modules.SessionAPI != nil {
 			sessionHandler = modules.SessionAPI.Handler()
 		}
+		if modules.HistoryAPI != nil {
+			historyHandler = modules.HistoryAPI.Handler()
+		}
+		historySvc = modules.HistorySvc
 		authMiddleware = modules.Middleware
 	}
 
@@ -86,10 +96,10 @@ func main() {
 		}
 	}
 	providerManager := providermanager.NewManager(providersSet, managerOpts...)
-	apiHandlers := apihandlers.New(log, providerManager)
+	apiHandlers := apihandlers.New(log, providerManager, historySvc)
 
 	healthService := healthsvc.NewService(providersSet)
-	router := httprouter.New(log, healthService, apiHandlers, authHandlers, sessionHandler, authMiddleware)
+	router := httprouter.New(log, healthService, apiHandlers, authHandlers, sessionHandler, historyHandler, authMiddleware)
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.HTTPPort,
@@ -253,6 +263,8 @@ func initAuth(ctx context.Context, log *slog.Logger, cfg config.Config) (*authCo
 
 	cleanup := func() { runCleanup(cleanupFns) }
 	var sessionAPI *apihandlers.ProviderSessionAPI
+	var historyAPI *apihandlers.HistoryAPI
+	var historySvc *history.Service
 	if cfg.Security.ProviderSession.PrimaryKeyID == "" || len(cfg.Security.ProviderSession.Keys) == 0 {
 		log.Warn("provider session endpoints disabled", "reason", "missing encryption key config")
 	} else {
@@ -269,10 +281,20 @@ func initAuth(ctx context.Context, log *slog.Logger, cfg config.Config) (*authCo
 			}
 		}
 	}
+	historyRepo := history.NewPostgresRepository(dbConn)
+	storageBackend := storage.NewLocal(cfg.Storage.UploadDir)
+	historySvc, err = history.NewService(historyRepo, storageBackend)
+	if err != nil {
+		log.Error("failed to initialize history service", slog.Any("error", err))
+	} else {
+		historyAPI = apihandlers.NewHistoryAPI(log, historySvc)
+	}
 
 	components := &authComponents{
 		AuthAPI:    apihandlers.NewAuthAPI(log, authService, rateLimiter),
 		SessionAPI: sessionAPI,
+		HistoryAPI: historyAPI,
+		HistorySvc: historySvc,
 		Middleware: auth.AuthMiddleware(tokenManager),
 	}
 	return components, cleanup, nil

@@ -20,7 +20,7 @@ type HealthChecker interface {
 var openAPIPath = "openapi.yaml"
 
 // New builds the API mux wiring mandatory routes.
-func New(log *slog.Logger, healthSvc HealthChecker, apiHandlers *handlers.API, authHandlers *handlers.AuthAPI, sessionHandler http.Handler, authMiddleware func(http.Handler) http.Handler) http.Handler {
+func New(log *slog.Logger, healthSvc HealthChecker, apiHandlers *handlers.API, authHandlers *handlers.AuthAPI, sessionHandler http.Handler, historyHandler http.Handler, authMiddleware func(http.Handler) http.Handler) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -49,6 +49,10 @@ func New(log *slog.Logger, healthSvc HealthChecker, apiHandlers *handlers.API, a
 
 	if sessionHandler != nil && authMiddleware != nil {
 		mux.Handle("/providers/", authMiddleware(sessionHandler))
+	}
+
+	if historyHandler != nil && authMiddleware != nil {
+		mux.Handle("/history/", authMiddleware(historyHandler))
 	}
 
 	mux.HandleFunc("/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
