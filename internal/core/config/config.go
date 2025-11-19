@@ -20,6 +20,7 @@ type Config struct {
 	Database        DatabaseConfig
 	Storage         StorageConfig
 	Jobs            JobsConfig
+	Auth            AuthConfig
 }
 
 // OpenAIConfig captures the knobs for the OpenAI provider adapter.
@@ -90,6 +91,41 @@ type GenericHTTPConfig struct {
 	ConfigDir string
 }
 
+// AuthConfig captures authentication and session settings.
+type AuthConfig struct {
+	AccessSecret  string
+	RefreshSecret string
+	AccessTTL     time.Duration
+	RefreshTTL    time.Duration
+	SessionPrefix string
+	SessionRedis  RedisConnConfig
+	RateLimit     RateLimitConfig
+	Argon         Argon2Config
+}
+
+// RedisConnConfig defines connection knobs for Redis-backed features.
+type RedisConnConfig struct {
+	Addr     string
+	Password string
+	DB       int
+}
+
+// RateLimitConfig configures login rate limiting.
+type RateLimitConfig struct {
+	Window      time.Duration
+	MaxAttempts int
+	Redis       RedisConnConfig
+}
+
+// Argon2Config tunes password hashing costs.
+type Argon2Config struct {
+	Memory      uint32
+	Iterations  uint32
+	Parallelism uint8
+	SaltLength  uint32
+	KeyLength   uint32
+}
+
 // Load builds a Config from environment variables with sane defaults so the
 // service can boot even when optional variables are missing.
 func Load() Config {
@@ -148,6 +184,34 @@ func Load() Config {
 			CallbackBackoff:     getEnvAsDuration("JOBS_CALLBACK_BACKOFF", 30*time.Second),
 			UploadMaxMB:         getEnvAsInt("JOBS_UPLOAD_MAX_MB", 200),
 		},
+		Auth: AuthConfig{
+			AccessSecret:  getEnv("AUTH_ACCESS_SECRET", ""),
+			RefreshSecret: getEnv("AUTH_REFRESH_SECRET", ""),
+			AccessTTL:     getEnvAsDuration("AUTH_ACCESS_TTL", 900*time.Second),
+			RefreshTTL:    getEnvAsDuration("AUTH_REFRESH_TTL", 604800*time.Second),
+			SessionPrefix: getEnv("AUTH_SESSION_PREFIX", "auth:session"),
+			SessionRedis: RedisConnConfig{
+				Addr:     getEnv("AUTH_SESSION_REDIS_ADDR", ""),
+				Password: getEnv("AUTH_SESSION_REDIS_PASSWORD", ""),
+				DB:       getEnvAsInt("AUTH_SESSION_REDIS_DB", 1),
+			},
+			RateLimit: RateLimitConfig{
+				Window:      getEnvAsDuration("AUTH_RATELIMIT_WINDOW", 60*time.Second),
+				MaxAttempts: getEnvAsInt("AUTH_RATELIMIT_MAX_ATTEMPTS", 5),
+				Redis: RedisConnConfig{
+					Addr:     getEnv("AUTH_RATELIMIT_REDIS_ADDR", ""),
+					Password: getEnv("AUTH_RATELIMIT_REDIS_PASSWORD", ""),
+					DB:       getEnvAsInt("AUTH_RATELIMIT_REDIS_DB", 2),
+				},
+			},
+			Argon: Argon2Config{
+				Memory:      getEnvAsUint32("AUTH_ARGON_MEMORY", 64*1024),
+				Iterations:  getEnvAsUint32("AUTH_ARGON_ITERATIONS", 3),
+				Parallelism: uint8(getEnvAsUint32("AUTH_ARGON_PARALLELISM", 2)),
+				SaltLength:  getEnvAsUint32("AUTH_ARGON_SALT_LENGTH", 16),
+				KeyLength:   getEnvAsUint32("AUTH_ARGON_KEY_LENGTH", 32),
+			},
+		},
 	}
 }
 
@@ -199,4 +263,19 @@ func getEnvAsCSV(key string, fallback []string) []string {
 		return append([]string(nil), fallback...)
 	}
 	return values
+}
+
+func getEnvAsUint32(key string, fallback uint32) uint32 {
+	if raw, ok := os.LookupEnv(key); ok && raw != "" {
+		value, err := strconv.Atoi(raw)
+		if err != nil {
+			log.Printf("invalid %s value %q, using default %d", key, raw, fallback)
+			return fallback
+		}
+		if value < 0 {
+			value = int(fallback)
+		}
+		return uint32(value)
+	}
+	return fallback
 }

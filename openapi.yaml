@@ -194,6 +194,100 @@ paths:
                 $ref: '#/components/schemas/ProvidersRespEnvelope'
         '500':
           $ref: '#/components/responses/InternalError'
+  /auth/register:
+    post:
+      summary: Register a new user and issue an access/refresh token pair.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterReq'
+      responses:
+        '200':
+          description: Token pair for the new account
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthRespEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '409':
+          $ref: '#/components/responses/Conflict'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/login:
+    post:
+      summary: Exchange user credentials for an access/refresh token pair.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginReq'
+      responses:
+        '200':
+          description: Token pair for the authenticated user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthRespEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/refresh:
+    post:
+      summary: Rotate refresh tokens and mint a new access token.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RefreshReq'
+      responses:
+        '200':
+          description: Rotated token pair
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthRespEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+  /auth/logout:
+    post:
+      summary: Revoke the provided refresh token and its session.
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LogoutReq'
+      responses:
+        '200':
+          description: Logout confirmation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LogoutRespEnvelope'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
 components:
   parameters:
     StrategyParam:
@@ -223,6 +317,24 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResp'
+    Unauthorized:
+      description: Authentication failed
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResp'
+    Conflict:
+      description: Resource already exists
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResp'
+    TooManyRequests:
+      description: Rate limit exceeded
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResp'
   schemas:
     ErrorResp:
       type: object
@@ -232,6 +344,47 @@ components:
         provider:
           type: string
       additionalProperties: false
+    RegisterReq:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        display_name:
+          type: string
+        password:
+          type: string
+          format: password
+        preferences:
+          type: object
+          additionalProperties: true
+        timezone:
+          type: string
+        locale:
+          type: string
+      required: [email, display_name, password]
+    LoginReq:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          format: password
+      required: [email, password]
+    RefreshReq:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+      required: [refresh_token]
+    LogoutReq:
+      type: object
+      properties:
+        refresh_token:
+          type: string
+      required: [refresh_token]
     TextReq:
       type: object
       properties:
@@ -427,6 +580,26 @@ components:
           type: integer
         rate_limit_rps:
           type: number
+    AuthTokens:
+      type: object
+      properties:
+        access_token:
+          type: string
+        access_expires_in:
+          type: string
+          description: Go duration string (e.g. "15m0s").
+        refresh_token:
+          type: string
+        refresh_expires_in:
+          type: string
+          description: Go duration string (e.g. "168h0m0s").
+      required: [access_token, access_expires_in, refresh_token, refresh_expires_in]
+    LogoutResp:
+      type: object
+      properties:
+        status:
+          type: string
+      required: [status]
     TextRespEnvelope:
       type: object
       properties:
@@ -488,4 +661,16 @@ components:
       properties:
         data:
           $ref: '#/components/schemas/ProvidersResp'
+      required: [data]
+    AuthRespEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/AuthTokens'
+      required: [data]
+    LogoutRespEnvelope:
+      type: object
+      properties:
+        data:
+          $ref: '#/components/schemas/LogoutResp'
       required: [data]

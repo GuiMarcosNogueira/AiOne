@@ -8,6 +8,7 @@ Backend skeleton in Go following Clean Architecture conventions to fan-out reque
 - Basic HTTP server under `cmd/server` exposing `GET /healthz`.
 - Clean layering: `internal/core` (config/logging), `internal/services` (domain logic), `internal/providers` (provider ports/adapters), `pkg/http` (delivery layer).
 - Real adapters for OpenAI and Google Gemini (text, multimodal, image, video, ASR, embeddings) plus mock providers for local testing.
+- Optional Argon2id + JWT authentication stack (register/login/refresh/logout) backed by Postgres, Redis sessions and a login rate limiter.
 
 ## Quickstart
 
@@ -41,6 +42,46 @@ make lint    # runs go vet ./...
 ```
 
 The server listens on `HTTP_PORT` (defaults to `8080`). Visit `http://localhost:8080/healthz` to check aggregated provider health. When both `OPENAI_API_KEY` and `GEMINI_API_KEY` are provided, `/v1/providers` lists each adapter with its capability matrix so you can drive routing strategies via `?strategy=`.
+
+## Authentication (optional)
+
+The `/auth/*` endpoints stay disabled until the required env vars are present. To enable user management:
+
+1. Provision Postgres and Redis (the compose file `docker-compose.deps.yml` already spins up both).
+2. Apply the migration under `migrations/001_users.sql` to your Postgres database:
+	```bash
+	psql "$DATABASE_URL" -f migrations/001_users.sql
+	```
+3. Add the following secrets to `.env` (override TTLs/costs as needed):
+	```dotenv
+	AUTH_ACCESS_SECRET=change-me
+	AUTH_REFRESH_SECRET=change-me-too
+	AUTH_ACCESS_TTL=900            # seconds
+	AUTH_REFRESH_TTL=604800        # seconds
+	AUTH_SESSION_PREFIX=auth:session
+	AUTH_SESSION_REDIS_ADDR=localhost:6379
+	AUTH_SESSION_REDIS_DB=1
+	AUTH_SESSION_REDIS_PASSWORD=
+	AUTH_RATELIMIT_WINDOW=60       # seconds
+	AUTH_RATELIMIT_MAX_ATTEMPTS=5
+	AUTH_RATELIMIT_REDIS_ADDR=localhost:6379
+	AUTH_RATELIMIT_REDIS_DB=2
+	AUTH_RATELIMIT_REDIS_PASSWORD=
+	AUTH_ARGON_MEMORY=65536
+	AUTH_ARGON_ITERATIONS=3
+	AUTH_ARGON_PARALLELISM=2
+	AUTH_ARGON_SALT_LENGTH=16
+	AUTH_ARGON_KEY_LENGTH=32
+	```
+
+With those values set the server exposes:
+
+- `POST /auth/register` – create an account and get an access/refresh token pair.
+- `POST /auth/login` – exchange credentials for a new token pair (subject to Redis-backed rate limiting).
+- `POST /auth/refresh` – rotate refresh tokens + sessions (invalidates the previous one).
+- `POST /auth/logout` – revoke the provided refresh token/session.
+
+Access tokens are standard JWTs signed with `AUTH_ACCESS_SECRET`. Refresh tokens are JWTs bound to a Redis session entry, so logout/refresh rotation invalidates stolen tokens immediately.
 
 ## Generic HTTP providers
 

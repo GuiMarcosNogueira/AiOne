@@ -23,7 +23,7 @@ func TestRouterHealthz(t *testing.T) {
 	log := testLogger()
 	healthSvc := &stubHealth{statuses: []health.Status{{Name: "mock", Healthy: true}}}
 	api := handlers.New(log, providermanager.NewManager([]providers.Provider{mockproviders.New("mock")}))
-	r := New(log, healthSvc, api)
+	r := New(log, healthSvc, api, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -45,7 +45,7 @@ func TestRouterHealthz(t *testing.T) {
 }
 
 func TestRouterDocs(t *testing.T) {
-	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil)))
+	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil)), nil)
 	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -61,7 +61,7 @@ func TestRouterOpenAPI(t *testing.T) {
 	oldPath := openAPIPath
 	t.Cleanup(func() { openAPIPath = oldPath })
 	openAPIPath = filepath.Join("..", "..", "..", "openapi.yaml")
-	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil)))
+	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil)), nil)
 	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
