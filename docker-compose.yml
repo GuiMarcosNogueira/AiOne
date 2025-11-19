@@ -1,0 +1,17 @@
+version: "3.9"
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL:-postgres://aione:aione@host.docker.internal:5432/aione?sslmode=disable}
+      REDIS_ADDR: ${REDIS_ADDR:-host.docker.internal:6379}
+      PROVIDER_STRATEGY: ${PROVIDER_STRATEGY:-first}
+      GENERIC_PROVIDER_CONFIG_DIR: /app/internal/providers/config
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
