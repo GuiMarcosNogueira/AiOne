@@ -31,7 +31,7 @@ func TestLoadUsesDefaults(t *testing.T) {
 	t.Setenv("LOG_PROVIDER_CALLS", "")
 
 	cfg := Load()
-	if cfg.HTTPPort != "8080" {
+	if cfg.HTTPPort != "8089" {
 		t.Fatalf("expected default http port, got %s", cfg.HTTPPort)
 	}
 	if cfg.ProviderManager.FailoverAttempts != 3 {
@@ -48,6 +48,18 @@ func TestLoadUsesDefaults(t *testing.T) {
 	}
 	if cfg.Logging.HTTPRequests || cfg.Logging.ProviderCalls {
 		t.Fatalf("expected logging disabled by default")
+	}
+	if !cfg.GRPC.Enabled {
+		t.Fatalf("expected grpc enabled by default")
+	}
+	if cfg.GRPC.Port != "9090" {
+		t.Fatalf("expected default grpc port, got %s", cfg.GRPC.Port)
+	}
+	if !cfg.GRPC.Reflection {
+		t.Fatalf("expected grpc reflection enabled by default")
+	}
+	if cfg.GRPC.MaxRecvMB != 16 || cfg.GRPC.MaxSendMB != 16 {
+		t.Fatalf("expected default grpc msg limits 16mb")
 	}
 }
 
@@ -74,6 +86,11 @@ func TestLoadReadsEnvironment(t *testing.T) {
 	t.Setenv("JOBS_UPLOAD_MAX_MB", "500")
 	t.Setenv("LOG_HTTP_REQUESTS", "true")
 	t.Setenv("LOG_PROVIDER_CALLS", "true")
+	t.Setenv("GRPC_ENABLED", "false")
+	t.Setenv("GRPC_PORT", "50051")
+	t.Setenv("GRPC_REFLECTION", "false")
+	t.Setenv("GRPC_MAX_RECV_MB", "32")
+	t.Setenv("GRPC_MAX_SEND_MB", "64")
 
 	cfg := Load()
 	if cfg.HTTPPort != "9090" || cfg.LogLevel != "debug" {
@@ -129,6 +146,18 @@ func TestLoadReadsEnvironment(t *testing.T) {
 	}
 	if !cfg.Logging.HTTPRequests || !cfg.Logging.ProviderCalls {
 		t.Fatalf("expected logging flags from env")
+	}
+	if cfg.GRPC.Enabled {
+		t.Fatalf("expected grpc disabled via env")
+	}
+	if cfg.GRPC.Port != "50051" {
+		t.Fatalf("expected grpc port override")
+	}
+	if cfg.GRPC.Reflection {
+		t.Fatalf("expected grpc reflection disabled via env")
+	}
+	if cfg.GRPC.MaxRecvMB != 32 || cfg.GRPC.MaxSendMB != 64 {
+		t.Fatalf("expected grpc limits override")
 	}
 }
 

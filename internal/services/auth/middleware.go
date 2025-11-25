@@ -30,7 +30,7 @@ func AuthMiddleware(tokens *TokenManager) func(http.Handler) http.Handler {
 				http.Error(w, "invalid token", http.StatusUnauthorized)
 				return
 			}
-			ctx := context.WithValue(r.Context(), claimsKey, Claims{UserID: claims.UserID, Email: claims.Email})
+			ctx := ContextWithClaims(r.Context(), Claims{UserID: claims.UserID, Email: claims.Email})
 			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
@@ -40,6 +40,14 @@ func AuthMiddleware(tokens *TokenManager) func(http.Handler) http.Handler {
 func ClaimsFromContext(ctx context.Context) (Claims, bool) {
 	claims, ok := ctx.Value(claimsKey).(Claims)
 	return claims, ok
+}
+
+// ContextWithClaims stores the provided claims on the context chain.
+func ContextWithClaims(ctx context.Context, claims Claims) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return context.WithValue(ctx, claimsKey, claims)
 }
 
 // RateLimiter enforces sliding window rate limits backed by Redis.

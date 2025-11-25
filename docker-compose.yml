@@ -55,8 +55,14 @@ services:
       STORAGE_SERVE_FROM_API: ${STORAGE_SERVE_FROM_API_DOCKER:-false}
       AUTH_SESSION_REDIS_ADDR: ${AUTH_SESSION_REDIS_ADDR_DOCKER:-redis:6379}
       AUTH_RATELIMIT_REDIS_ADDR: ${AUTH_RATELIMIT_REDIS_ADDR_DOCKER:-redis:6379}
+      GRPC_ENABLED: ${GRPC_ENABLED:-true}
+      GRPC_PORT: ${GRPC_PORT:-9090}
+      GRPC_REFLECTION: ${GRPC_REFLECTION:-true}
+      GRPC_MAX_RECV_MB: ${GRPC_MAX_RECV_MB:-16}
+      GRPC_MAX_SEND_MB: ${GRPC_MAX_SEND_MB:-16}
     ports:
-      - "8089:8089"
+      - "${HTTP_PORT:-8089}:${HTTP_PORT:-8089}"
+      - "${GRPC_PORT:-9090}:${GRPC_PORT:-9090}"
     volumes:
       - storage_data:/app/storage
     depends_on:

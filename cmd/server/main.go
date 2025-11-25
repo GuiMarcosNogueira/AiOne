@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -24,6 +25,7 @@ import (
 	"syscall"
 
 	_ "github.com/midia/aione/api/docs"
+	grpcserver "github.com/midia/aione/api/grpc/server"
 	apihandlers "github.com/midia/aione/api/handlers"
 	"github.com/midia/aione/internal/core/config"
 	"github.com/midia/aione/internal/core/db"
@@ -45,6 +47,11 @@ import (
 	"github.com/midia/aione/internal/services/users"
 	httpmiddleware "github.com/midia/aione/pkg/http/middleware"
 	httprouter "github.com/midia/aione/pkg/http/router"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/metadata"
+	"google.golang.org/grpc/reflection"
+	"google.golang.org/grpc/status"
 )
 
 var notifyContext = signal.NotifyContext
@@ -53,6 +60,8 @@ type authComponents struct {
 	AuthAPI    *apihandlers.AuthAPI
 	SessionAPI *apihandlers.ProviderSessionAPI
 	HistoryAPI *apihandlers.HistoryAPI
+	AuthSvc    *auth.Service
+	Tokens     *auth.TokenManager
 	HistorySvc *history.Service
 	SessionSvc *providersessions.Service
 	Middleware func(http.Handler) http.Handler
@@ -91,6 +100,7 @@ func main() {
 	var sessionHandler http.Handler
 	var historyHandler http.Handler
 	var historySvc *history.Service
+	var conversationSvc *session.Service
 	var conversationHandler http.Handler
 	var authMiddleware func(http.Handler) http.Handler
 	if modules != nil {
@@ -153,6 +163,56 @@ func main() {
 		Handler: handler,
 	}
 
+	var grpcSrv *grpc.Server
+	var grpcShutdown func(context.Context)
+	if cfg.GRPC.Enabled {
+		grpcCfg := grpcserver.Config{
+			Log:              log,
+			Providers:        providerManager,
+			Assets:           assetService,
+			Auth:             nil,
+			ProviderSessions: nil,
+			Conversation:     conversationSvc,
+			History:          historySvc,
+		}
+		var tokenManager *auth.TokenManager
+		if modules != nil {
+			grpcCfg.Auth = modules.AuthSvc
+			grpcCfg.ProviderSessions = modules.SessionSvc
+			grpcCfg.History = historySvc
+			tokenManager = modules.Tokens
+		}
+		listener, err := net.Listen("tcp", ":"+cfg.GRPC.Port)
+		if err != nil {
+			log.Error("failed to bind grpc listener", "error", err, "port", cfg.GRPC.Port)
+			return
+		}
+		serverOpts := grpcServerOptions(cfg.GRPC, log, tokenManager)
+		grpcSrv = grpc.NewServer(serverOpts...)
+		grpcserver.NewServer(grpcCfg).RegisterServices(grpcSrv)
+		if cfg.GRPC.Reflection {
+			reflection.Register(grpcSrv)
+		}
+		go func() {
+			log.Info("gRPC server listening", "port", cfg.GRPC.Port)
+			if err := grpcSrv.Serve(listener); err != nil && !errors.Is(err, grpc.ErrServerStopped) {
+				log.Error("grpc server exited", "error", err)
+			}
+		}()
+		grpcShutdown = func(ctx context.Context) {
+			done := make(chan struct{})
+			go func() {
+				grpcSrv.GracefulStop()
+				close(done)
+			}()
+			select {
+			case <-done:
+			case <-ctx.Done():
+				grpcSrv.Stop()
+			}
+		}
+	}
+
 	go func() {
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Error("http server crashed", "error", err)
@@ -168,12 +228,85 @@ func main() {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownTimeout)
 	defer cancel()
 
+	if grpcShutdown != nil {
+		grpcShutdown(shutdownCtx)
+	}
+
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		log.Error("graceful shutdown failed", "error", err)
 		return
 	}
 
 	log.Info("server stopped cleanly")
+}
+
+func grpcServerOptions(cfg config.GRPCConfig, log *slog.Logger, tokens *auth.TokenManager) []grpc.ServerOption {
+	recvLimit := bytesFromMB(cfg.MaxRecvMB, 16)
+	sendLimit := bytesFromMB(cfg.MaxSendMB, 16)
+	opts := []grpc.ServerOption{
+		grpc.MaxRecvMsgSize(recvLimit),
+		grpc.MaxSendMsgSize(sendLimit),
+	}
+	if interceptor := grpcAuthUnaryInterceptor(log, tokens); interceptor != nil {
+		opts = append(opts, grpc.ChainUnaryInterceptor(interceptor))
+	}
+	return opts
+}
+
+func bytesFromMB(value int, fallback int) int {
+	if value <= 0 {
+		value = fallback
+	}
+	return value * 1024 * 1024
+}
+
+func grpcAuthUnaryInterceptor(log *slog.Logger, tokens *auth.TokenManager) grpc.UnaryServerInterceptor {
+	if tokens == nil {
+		return nil
+	}
+	if log == nil {
+		log = slog.Default()
+	}
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		token, err := bearerTokenFromContext(ctx)
+		if err != nil {
+			log.Debug("invalid gRPC authorization header", "method", info.FullMethod, "error", err)
+			return nil, status.Error(codes.Unauthenticated, "invalid authorization header")
+		}
+		if token != "" {
+			claims, err := tokens.ParseAccess(token)
+			if err != nil {
+				return nil, status.Error(codes.Unauthenticated, "invalid bearer token")
+			}
+			ctx = auth.ContextWithClaims(ctx, auth.Claims{UserID: claims.UserID, Email: claims.Email})
+		}
+		return handler(ctx, req)
+	}
+}
+
+func bearerTokenFromContext(ctx context.Context) (string, error) {
+	md, ok := metadata.FromIncomingContext(ctx)
+	if !ok {
+		return "", nil
+	}
+	for _, key := range []string{"authorization", "grpcgateway-authorization"} {
+		if values := md.Get(key); len(values) > 0 {
+			header := strings.TrimSpace(values[0])
+			if header == "" {
+				continue
+			}
+			parts := strings.SplitN(header, " ", 2)
+			if len(parts) != 2 || !strings.EqualFold(parts[0], "bearer") {
+				continue
+			}
+			token := strings.TrimSpace(parts[1])
+			if token == "" {
+				return "", fmt.Errorf("missing bearer token")
+			}
+			return token, nil
+		}
+	}
+	return "", nil
 }
 
 func registerProviders(cfg config.Config, log *slog.Logger) []providers.Provider {
@@ -333,6 +466,8 @@ func initAuth(ctx context.Context, log *slog.Logger, cfg config.Config) (*authCo
 		AuthAPI:    apihandlers.NewAuthAPI(log, authService, rateLimiter),
 		SessionAPI: sessionAPI,
 		HistoryAPI: historyAPI,
+		AuthSvc:    authService,
+		Tokens:     tokenManager,
 		HistorySvc: historySvc,
 		SessionSvc: sessionSvc,
 		Middleware: auth.AuthMiddleware(tokenManager),

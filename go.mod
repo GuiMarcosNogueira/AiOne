@@ -17,6 +17,11 @@ require (
 require (
 	github.com/lib/pq v1.10.9
 	github.com/openai/openai-go v1.12.0
+	github.com/swaggo/swag v1.16.3
+	google.golang.org/genai v1.36.0
+	google.golang.org/grpc v1.66.2
+	google.golang.org/grpc/cmd/protoc-gen-go-grpc v1.5.1
+	google.golang.org/protobuf v1.34.2
 )
 
 require (
@@ -39,7 +44,6 @@ require (
 	github.com/russross/blackfriday/v2 v2.0.1 // indirect
 	github.com/shurcooL/sanitized_anchor_name v1.0.0 // indirect
 	github.com/swaggo/files/v2 v2.0.0 // indirect
-	github.com/swaggo/swag v1.16.3 // indirect
 	github.com/tidwall/gjson v1.14.4 // indirect
 	github.com/tidwall/match v1.1.1 // indirect
 	github.com/tidwall/pretty v1.2.1 // indirect
@@ -47,13 +51,8 @@ require (
 	github.com/urfave/cli/v2 v2.3.0 // indirect
 	go.opencensus.io v0.24.0 // indirect
 	golang.org/x/net v0.38.0 // indirect
-	golang.org/x/oauth2 v0.23.0 // indirect
 	golang.org/x/tools v0.26.0 // indirect
-	google.golang.org/genai v1.36.0 // indirect
-	google.golang.org/genproto/googleapis/api v0.0.0-20240903143218-8af14fe29dc1 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240903143218-8af14fe29dc1 // indirect
-	google.golang.org/grpc v1.66.2 // indirect
-	google.golang.org/protobuf v1.34.2 // indirect
 	gopkg.in/yaml.v2 v2.4.0 // indirect
 	sigs.k8s.io/yaml v1.3.0 // indirect
 )
@@ -67,7 +66,6 @@ require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
 	github.com/jackc/puddle/v2 v2.2.2 // indirect
-	github.com/kr/text v0.2.0 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/yuin/gopher-lua v1.1.1 // indirect
 	golang.org/x/crypto v0.37.0
