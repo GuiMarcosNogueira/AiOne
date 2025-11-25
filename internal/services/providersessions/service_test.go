@@ -2,124 +2,125 @@ package providersessions
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"testing"
 	"time"
-
-	"github.com/midia/aione/pkg/encryption"
 )
 
-func TestServiceSetProviderKeyStoresEncryptedSecret(t *testing.T) {
+func TestCreateSessionStoresMetadata(t *testing.T) {
 	svc, repo := newTestService(t)
-	expires := time.Now().Add(24 * time.Hour).UTC()
-	details, err := svc.SetProviderKey(context.Background(), SetKeyInput{
+	expires := time.Now().Add(2 * time.Hour)
+	details, err := svc.CreateSession(context.Background(), CreateSessionInput{
 		UserID:       "user-1",
-		ProviderName: "openai",
-		ProviderKey:  "sk-test",
-		Metadata:     map[string]any{"env": "dev"},
+		ProviderName: "OpenAI",
+		Title:        "Demo",
+		Metadata:     map[string]any{"team": "alpha"},
 		ExpiresAt:    &expires,
 	})
 	if err != nil {
-		t.Fatalf("set provider key: %v", err)
+		t.Fatalf("create session: %v", err)
 	}
-	if details.ProviderKey != "sk-test" {
-		t.Fatalf("expected decrypted key, got %q", details.ProviderKey)
+	if details.ProviderName != "openai" {
+		t.Fatalf("expected provider normalized, got %s", details.ProviderName)
 	}
-	stored, ok := repo.sessions[repoKey("user-1", "openai")]
-	if !ok {
-		t.Fatalf("session not stored")
-	}
-	if stored.EncryptionKeyID != svc.enc.ActiveKeyID() {
-		t.Fatalf("expected encryption key id to be stored")
-	}
-	if stored.Metadata["env"] != "dev" {
-		t.Fatalf("expected metadata to persist")
+	if len(repo.sessions) != 1 {
+		t.Fatalf("expected session stored")
 	}
 }
 
-func TestServiceValidatesInputs(t *testing.T) {
+func TestCreateSessionValidatesInput(t *testing.T) {
 	svc, _ := newTestService(t)
-	if _, err := svc.SetProviderKey(context.Background(), SetKeyInput{}); !errors.Is(err, ErrUserIDRequired) {
-		t.Fatalf("expected user id error, got %v", err)
+	if _, err := svc.CreateSession(context.Background(), CreateSessionInput{}); !errors.Is(err, ErrUserIDRequired) {
+		t.Fatalf("expected user id error")
 	}
-	if _, err := svc.SetProviderKey(context.Background(), SetKeyInput{UserID: "u"}); !errors.Is(err, ErrProviderRequired) {
-		t.Fatalf("expected provider error, got %v", err)
+	if _, err := svc.CreateSession(context.Background(), CreateSessionInput{UserID: "u"}); !errors.Is(err, ErrProviderRequired) {
+		t.Fatalf("expected provider error")
 	}
-	if _, err := svc.SetProviderKey(context.Background(), SetKeyInput{UserID: "u", ProviderName: "openai"}); !errors.Is(err, ErrProviderKeyRequired) {
-		t.Fatalf("expected provider key error, got %v", err)
-	}
-	if err := svc.ResetSession(context.Background(), "", "openai"); !errors.Is(err, ErrUserIDRequired) {
-		t.Fatalf("expected reset user id error")
-	}
-	if err := svc.ResetSession(context.Background(), "user", ""); !errors.Is(err, ErrProviderRequired) {
-		t.Fatalf("expected reset provider error")
+	if _, err := svc.CreateSession(context.Background(), CreateSessionInput{UserID: "u", ProviderName: "openai"}); !errors.Is(err, ErrTitleRequired) {
+		t.Fatalf("expected title error")
 	}
 }
 
-func TestServiceGetSessionDecrypts(t *testing.T) {
+func TestGetSessionValidatesInput(t *testing.T) {
 	svc, _ := newTestService(t)
-	_, err := svc.SetProviderKey(context.Background(), SetKeyInput{UserID: "user-1", ProviderName: "openai", ProviderKey: "sk-live"})
-	if err != nil {
-		t.Fatalf("set provider key: %v", err)
+	if _, err := svc.GetSession(context.Background(), "", "session"); !errors.Is(err, ErrUserIDRequired) {
+		t.Fatalf("expected user id error")
 	}
-	details, err := svc.GetSession(context.Background(), "user-1", "openai")
-	if err != nil {
-		t.Fatalf("get session: %v", err)
-	}
-	if details.ProviderKey != "sk-live" {
-		t.Fatalf("expected decrypted key, got %s", details.ProviderKey)
+	if _, err := svc.GetSession(context.Background(), "user", ""); !errors.Is(err, ErrSessionIDRequired) {
+		t.Fatalf("expected session id error")
 	}
 }
 
-func TestServiceRecordUsage(t *testing.T) {
-	svc, _ := newTestService(t)
-	_, err := svc.SetProviderKey(context.Background(), SetKeyInput{UserID: "user-1", ProviderName: "openai", ProviderKey: "sk-usage"})
+func TestListSessionsFilters(t *testing.T) {
+	svc, repo := newTestService(t)
+	repo.sessions["session-1"] = Session{ID: "session-1", UserID: "user-1", ProviderName: "openai", Title: "Chat", LastInteraction: time.Now(), CreatedAt: time.Now(), UpdatedAt: time.Now()}
+	results, err := svc.ListSessions(context.Background(), ListSessionsInput{UserID: "user-1", ProviderName: "openai"})
 	if err != nil {
-		t.Fatalf("set provider key: %v", err)
+		t.Fatalf("list sessions: %v", err)
 	}
-	now := time.Now().UTC()
+	if len(results) != 1 {
+		t.Fatalf("expected 1 session, got %d", len(results))
+	}
+}
+
+func TestRecordUsageValidatesInput(t *testing.T) {
+	svc, _ := newTestService(t)
+	if _, err := svc.RecordUsage(context.Background(), UsageInput{}); !errors.Is(err, ErrUserIDRequired) {
+		t.Fatalf("expected user id error")
+	}
+	if _, err := svc.RecordUsage(context.Background(), UsageInput{UserID: "u"}); !errors.Is(err, ErrProviderRequired) {
+		t.Fatalf("expected provider error")
+	}
+	if _, err := svc.RecordUsage(context.Background(), UsageInput{UserID: "u", ProviderName: "openai"}); !errors.Is(err, ErrSessionIDRequired) {
+		t.Fatalf("expected session id error")
+	}
+}
+
+func TestRecordUsageUpdatesSession(t *testing.T) {
+	svc, repo := newTestService(t)
+	repo.sessions["session-1"] = Session{ID: "session-1", UserID: "user-1", ProviderName: "openai", Title: "Chat", LastInteraction: time.Now(), CreatedAt: time.Now(), UpdatedAt: time.Now()}
 	details, err := svc.RecordUsage(context.Background(), UsageInput{
+		SessionID:       "session-1",
 		UserID:          "user-1",
 		ProviderName:    "openai",
-		TokensDelta:     123,
-		Metadata:        map[string]any{"last_request": "chat"},
-		LastInteraction: now,
+		TokensDelta:     42,
+		Metadata:        map[string]any{"last": "msg"},
+		LastInteraction: time.Now().Add(time.Minute),
 	})
 	if err != nil {
 		t.Fatalf("record usage: %v", err)
 	}
-	if details.TotalTokensUsed != 123 {
-		t.Fatalf("expected tokens to increment, got %d", details.TotalTokensUsed)
-	}
-	if details.Metadata["last_request"] != "chat" {
-		t.Fatalf("expected metadata update")
+	if details.TotalTokensUsed != 42 {
+		t.Fatalf("expected usage to increment")
 	}
 }
 
-func TestServiceResetSession(t *testing.T) {
+func TestArchiveSessionValidatesInput(t *testing.T) {
+	svc, _ := newTestService(t)
+	if err := svc.ArchiveSession(context.Background(), "", "session"); !errors.Is(err, ErrUserIDRequired) {
+		t.Fatalf("expected user id error")
+	}
+	if err := svc.ArchiveSession(context.Background(), "user", ""); !errors.Is(err, ErrSessionIDRequired) {
+		t.Fatalf("expected session id error")
+	}
+}
+
+func TestArchiveSessionMarksArchived(t *testing.T) {
 	svc, repo := newTestService(t)
-	_, err := svc.SetProviderKey(context.Background(), SetKeyInput{UserID: "user-1", ProviderName: "openai", ProviderKey: "sk-reset"})
-	if err != nil {
-		t.Fatalf("set provider key: %v", err)
+	now := time.Now()
+	repo.sessions["session-1"] = Session{ID: "session-1", UserID: "user-1", ProviderName: "openai", Title: "Chat", LastInteraction: now, CreatedAt: now, UpdatedAt: now}
+	if err := svc.ArchiveSession(context.Background(), "user-1", "session-1"); err != nil {
+		t.Fatalf("archive session: %v", err)
 	}
-	if err := svc.ResetSession(context.Background(), "user-1", "openai"); err != nil {
-		t.Fatalf("reset session: %v", err)
-	}
-	if _, ok := repo.sessions[repoKey("user-1", "openai")]; ok {
-		t.Fatalf("expected session to be deleted")
+	if repo.sessions["session-1"].ArchivedAt == nil {
+		t.Fatalf("expected archived timestamp set")
 	}
 }
 
 func newTestService(t *testing.T) (*Service, *memoryRepository) {
 	t.Helper()
 	repo := newMemoryRepository()
-	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
-	enc, err := encryption.NewManager("primary", map[string]string{"primary": key})
-	if err != nil {
-		t.Fatalf("encryption manager: %v", err)
-	}
-	svc, err := NewService(repo, enc)
+	svc, err := NewService(repo)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -127,59 +128,58 @@ func newTestService(t *testing.T) (*Service, *memoryRepository) {
 }
 
 type memoryRepository struct {
-	sessions  map[string]Session
-	upsertErr error
+	sessions map[string]Session
 }
 
 func newMemoryRepository() *memoryRepository {
 	return &memoryRepository{sessions: map[string]Session{}}
 }
 
-func repoKey(userID, provider string) string {
-	return userID + "|" + provider
-}
-
-func (m *memoryRepository) Upsert(ctx context.Context, params UpsertParams) (Session, error) {
-	if m.upsertErr != nil {
-		return Session{}, m.upsertErr
-	}
-	key := repoKey(params.UserID, params.ProviderName)
-	now := params.LastInteraction
-	if now.IsZero() {
-		now = time.Now().UTC()
-	}
+func (m *memoryRepository) Create(ctx context.Context, params CreateParams) (Session, error) {
+	now := time.Now().UTC()
 	sess := Session{
+		ID:              params.ID,
 		UserID:          params.UserID,
 		ProviderName:    params.ProviderName,
-		EncryptedKey:    append([]byte(nil), params.EncryptedKey...),
-		EncryptionKeyID: params.EncryptionKeyID,
-		LastInteraction: now,
-		Metadata:        cloneMetadata(params.Metadata),
+		Title:           params.Title,
+		Metadata:        params.Metadata,
 		ExpiresAt:       params.ExpiresAt,
+		LastInteraction: now,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
-	if existing, ok := m.sessions[key]; ok {
-		sess.TotalTokensUsed = existing.TotalTokensUsed
-		sess.CreatedAt = existing.CreatedAt
-	}
-	m.sessions[key] = sess
+	m.sessions[sess.ID] = sess
 	return sess, nil
 }
 
-func (m *memoryRepository) Get(ctx context.Context, userID, provider string) (Session, error) {
-	key := repoKey(userID, provider)
-	sess, ok := m.sessions[key]
-	if !ok {
+func (m *memoryRepository) Get(ctx context.Context, userID, sessionID string) (Session, error) {
+	sess, ok := m.sessions[sessionID]
+	if !ok || sess.UserID != userID {
 		return Session{}, ErrSessionNotFound
 	}
 	return sess, nil
 }
 
+func (m *memoryRepository) List(ctx context.Context, params ListParams) ([]Session, error) {
+	var sessions []Session
+	for _, sess := range m.sessions {
+		if sess.UserID != params.UserID {
+			continue
+		}
+		if params.ProviderName != "" && sess.ProviderName != params.ProviderName {
+			continue
+		}
+		if !params.IncludeArchived && sess.ArchivedAt != nil {
+			continue
+		}
+		sessions = append(sessions, sess)
+	}
+	return sessions, nil
+}
+
 func (m *memoryRepository) UpdateUsage(ctx context.Context, params UsageUpdateParams) (Session, error) {
-	key := repoKey(params.UserID, params.ProviderName)
-	sess, ok := m.sessions[key]
-	if !ok {
+	sess, ok := m.sessions[params.SessionID]
+	if !ok || sess.UserID != params.UserID {
 		return Session{}, ErrSessionNotFound
 	}
 	sess.TotalTokensUsed += params.TokensDelta
@@ -187,32 +187,24 @@ func (m *memoryRepository) UpdateUsage(ctx context.Context, params UsageUpdatePa
 		sess.LastInteraction = params.LastInteraction
 	}
 	if params.Metadata != nil {
-		sess.Metadata = cloneMetadata(params.Metadata)
+		sess.Metadata = params.Metadata
 	}
 	if params.ExpiresAt != nil {
 		sess.ExpiresAt = params.ExpiresAt
 	}
 	sess.UpdatedAt = time.Now().UTC()
-	m.sessions[key] = sess
+	m.sessions[sess.ID] = sess
 	return sess, nil
 }
 
-func (m *memoryRepository) Delete(ctx context.Context, userID, provider string) error {
-	key := repoKey(userID, provider)
-	if _, ok := m.sessions[key]; !ok {
+func (m *memoryRepository) Archive(ctx context.Context, userID, sessionID string) error {
+	sess, ok := m.sessions[sessionID]
+	if !ok || sess.UserID != userID {
 		return ErrSessionNotFound
 	}
-	delete(m.sessions, key)
+	now := time.Now().UTC()
+	sess.ArchivedAt = &now
+	sess.UpdatedAt = now
+	m.sessions[sessionID] = sess
 	return nil
-}
-
-func cloneMetadata(meta map[string]any) map[string]any {
-	if meta == nil {
-		return map[string]any{}
-	}
-	cp := make(map[string]any, len(meta))
-	for k, v := range meta {
-		cp[k] = v
-	}
-	return cp
 }

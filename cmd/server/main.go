@@ -1,3 +1,15 @@
+//go:generate swag init -g main.go -o ../api/docs --outputTypes go,json,yaml
+
+// @title           AiOne API
+// @version         1.0
+// @description     Unified AI gateway that proxies multiple providers.
+// @BasePath        /
+// @schemes         http https
+// @accept          json
+// @produce         json
+// @securityDefinitions.apikey BearerAuth
+// @in              header
+// @name            Authorization
 package main
 
 import (
@@ -11,6 +23,7 @@ import (
 	"strings"
 	"syscall"
 
+	_ "github.com/midia/aione/api/docs"
 	apihandlers "github.com/midia/aione/api/handlers"
 	"github.com/midia/aione/internal/core/config"
 	"github.com/midia/aione/internal/core/db"
@@ -21,6 +34,7 @@ import (
 	generichttpprovider "github.com/midia/aione/internal/providers/generichttp"
 	mockproviders "github.com/midia/aione/internal/providers/mock"
 	openaiprovider "github.com/midia/aione/internal/providers/openai"
+	"github.com/midia/aione/internal/services/assets"
 	"github.com/midia/aione/internal/services/auth"
 	healthsvc "github.com/midia/aione/internal/services/health"
 	"github.com/midia/aione/internal/services/history"
@@ -29,7 +43,7 @@ import (
 	"github.com/midia/aione/internal/services/session"
 	"github.com/midia/aione/internal/services/storage"
 	"github.com/midia/aione/internal/services/users"
-	"github.com/midia/aione/pkg/encryption"
+	httpmiddleware "github.com/midia/aione/pkg/http/middleware"
 	httprouter "github.com/midia/aione/pkg/http/router"
 )
 
@@ -48,7 +62,21 @@ func main() {
 	cfg := config.Load()
 	log := logger.New(cfg.LogLevel)
 
-	log.Info("starting AI aggregator backend")
+	log.Info("starting AiOne backend")
+
+	var assetStorage storage.Storage
+	var mediaHandler http.Handler
+	if dir := strings.TrimSpace(cfg.Storage.UploadDir); dir != "" {
+		assetStorage = storage.NewLocal(dir)
+		if cfg.Storage.ServeFromAPI {
+			mediaHandler = http.StripPrefix("/media/", http.FileServer(http.Dir(dir)))
+		} else {
+			log.Info("media files served by external storage", "public_base_url", cfg.Storage.PublicBaseURL)
+		}
+	} else {
+		log.Warn("asset storage disabled", "reason", "missing upload dir")
+	}
+	assetService := assets.NewService(log, assetStorage, cfg.Storage.PublicBaseURL)
 
 	modules, cleanupAuth, err := initAuth(context.Background(), log, cfg)
 	if err != nil {
@@ -98,11 +126,14 @@ func main() {
 			managerOpts = append(managerOpts, providermanager.WithCache(redisCache, cacheCfg.TTL))
 		}
 	}
+	if cfg.Logging.ProviderCalls {
+		managerOpts = append(managerOpts, providermanager.WithProviderLogging(log, true))
+	}
 	providerManager := providermanager.NewManager(providersSet, managerOpts...)
-	apiHandlers := apihandlers.New(log, providerManager, historySvc)
+	apiHandlers := apihandlers.New(log, providerManager, historySvc, assetService)
 
 	if modules != nil && modules.SessionSvc != nil && historySvc != nil {
-		conversationSvc, err := session.NewService(log, providerManager, modules.SessionSvc, historySvc)
+		conversationSvc, err := session.NewService(log, providerManager, modules.SessionSvc, historySvc, assetService)
 		if err != nil {
 			log.Error("failed to initialize session conversation service", "error", err)
 		} else {
@@ -111,11 +142,15 @@ func main() {
 	}
 
 	healthService := healthsvc.NewService(providersSet)
-	router := httprouter.New(log, healthService, apiHandlers, authHandlers, sessionHandler, historyHandler, conversationHandler, authMiddleware)
+	router := httprouter.New(log, healthService, apiHandlers, authHandlers, sessionHandler, historyHandler, conversationHandler, mediaHandler, authMiddleware)
+	handler := http.Handler(router)
+	if cfg.Logging.HTTPRequests {
+		handler = httpmiddleware.RequestLogger(log, httpmiddleware.RequestLogOptions{})(handler)
+	}
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.HTTPPort,
-		Handler: router,
+		Handler: handler,
 	}
 
 	go func() {
@@ -148,9 +183,10 @@ func registerProviders(cfg config.Config, log *slog.Logger) []providers.Provider
 	} else {
 		prov, err := openaiprovider.NewProvider(openaiprovider.Config{
 			APIKey:             cfg.OpenAI.APIKey,
-			BaseURL:            cfg.OpenAI.BaseURL,
 			ChatModel:          cfg.OpenAI.ChatModel,
 			ImageModel:         cfg.OpenAI.ImageModel,
+			VideoModel:         cfg.OpenAI.VideoModel,
+			VideoSize:          cfg.OpenAI.VideoSize,
 			TranscriptionModel: cfg.OpenAI.TranscriptionModel,
 			EmbeddingsModel:    cfg.OpenAI.EmbeddingsModel,
 			ModerationModel:    cfg.OpenAI.ModerationModel,
@@ -167,7 +203,6 @@ func registerProviders(cfg config.Config, log *slog.Logger) []providers.Provider
 	} else {
 		prov, err := geminiprovider.NewProvider(geminiprovider.Config{
 			APIKey:             cfg.Gemini.APIKey,
-			BaseURL:            cfg.Gemini.BaseURL,
 			TextModel:          cfg.Gemini.TextModel,
 			VisionModel:        cfg.Gemini.VisionModel,
 			ImageModel:         cfg.Gemini.ImageModel,
@@ -175,7 +210,6 @@ func registerProviders(cfg config.Config, log *slog.Logger) []providers.Provider
 			TranscriptionModel: cfg.Gemini.TranscriptionModel,
 			EmbeddingsModel:    cfg.Gemini.EmbeddingsModel,
 			Timeout:            cfg.Gemini.Timeout,
-			MaxRetries:         cfg.Gemini.MaxRetries,
 			MaxUploadMB:        cfg.Gemini.MaxUploadMB,
 			AllowedMIMETypes:   cfg.Gemini.AllowedMIMETypes,
 		})
@@ -278,22 +312,13 @@ func initAuth(ctx context.Context, log *slog.Logger, cfg config.Config) (*authCo
 	var sessionSvc *providersessions.Service
 	var historyAPI *apihandlers.HistoryAPI
 	var historySvc *history.Service
-	if cfg.Security.ProviderSession.PrimaryKeyID == "" || len(cfg.Security.ProviderSession.Keys) == 0 {
-		log.Warn("provider session endpoints disabled", "reason", "missing encryption key config")
+	sessionRepo := providersessions.NewPostgresRepository(dbConn)
+	sessionService, err := providersessions.NewService(sessionRepo)
+	if err != nil {
+		log.Error("failed to initialize provider session service", slog.Any("error", err))
 	} else {
-		sessionRepo := providersessions.NewPostgresRepository(dbConn)
-		encMgr, err := encryption.NewManager(cfg.Security.ProviderSession.PrimaryKeyID, cfg.Security.ProviderSession.Keys)
-		if err != nil {
-			log.Error("failed to initialize provider session encryption", slog.Any("error", err))
-		} else {
-			sessionService, err := providersessions.NewService(sessionRepo, encMgr)
-			if err != nil {
-				log.Error("failed to initialize provider session service", slog.Any("error", err))
-			} else {
-				sessionSvc = sessionService
-				sessionAPI = apihandlers.NewProviderSessionAPI(log, sessionService)
-			}
-		}
+		sessionSvc = sessionService
+		sessionAPI = apihandlers.NewProviderSessionAPI(log, sessionService)
 	}
 	historyRepo := history.NewPostgresRepository(dbConn)
 	storageBackend := storage.NewLocal(cfg.Storage.UploadDir)

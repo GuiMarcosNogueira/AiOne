@@ -3,39 +3,37 @@ package providersessions
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
-	"github.com/midia/aione/pkg/encryption"
+	"github.com/google/uuid"
 )
 
-var (
-	// ErrUserIDRequired indicates the user id is missing.
-	ErrUserIDRequired = errors.New("user id required")
-	// ErrProviderRequired indicates the provider name is missing.
-	ErrProviderRequired = errors.New("provider name required")
-	// ErrProviderKeyRequired indicates the provider key is missing.
-	ErrProviderKeyRequired = errors.New("provider key required")
-)
-
-// Service coordinates encrypted provider sessions per user.
+// Service coordinates conversational sessions per user/provider.
 type Service struct {
 	repo Repository
-	enc  *encryption.Manager
 }
 
-// SetKeyInput captures the payload to create or update a session secret.
-type SetKeyInput struct {
+// CreateSessionInput defines the payload to start a new session.
+type CreateSessionInput struct {
 	UserID       string
 	ProviderName string
-	ProviderKey  string
+	Title        string
 	Metadata     map[string]any
 	ExpiresAt    *time.Time
 }
 
+// ListSessionsInput filters the listing of user sessions.
+type ListSessionsInput struct {
+	UserID          string
+	ProviderName    string
+	Limit           int
+	IncludeArchived bool
+}
+
 // UsageInput represents token usage increments.
 type UsageInput struct {
+	SessionID       string
 	UserID          string
 	ProviderName    string
 	TokensDelta     int64
@@ -44,55 +42,72 @@ type UsageInput struct {
 	ExpiresAt       *time.Time
 }
 
-// NewService builds a provider session service.
-func NewService(repo Repository, enc *encryption.Manager) (*Service, error) {
+// NewService builds a chat session service.
+func NewService(repo Repository) (*Service, error) {
 	if repo == nil {
 		return nil, errors.New("providersessions: repository required")
 	}
-	if enc == nil {
-		return nil, errors.New("providersessions: encryption manager required")
-	}
-	return &Service{repo: repo, enc: enc}, nil
+	return &Service{repo: repo}, nil
 }
 
-// SetProviderKey encrypts and stores the provider secret for the given user.
-func (s *Service) SetProviderKey(ctx context.Context, input SetKeyInput) (SessionDetails, error) {
-	if err := validateSetKeyInput(input); err != nil {
+// CreateSession opens a new conversation session for the user/provider.
+func (s *Service) CreateSession(ctx context.Context, input CreateSessionInput) (SessionDetails, error) {
+	if err := validateCreateInput(input); err != nil {
 		return SessionDetails{}, err
 	}
-	ciphertext, err := s.enc.Encrypt([]byte(input.ProviderKey))
-	if err != nil {
-		return SessionDetails{}, fmt.Errorf("encrypt provider key: %w", err)
+	params := CreateParams{
+		ID:           uuid.NewString(),
+		UserID:       strings.TrimSpace(input.UserID),
+		ProviderName: strings.ToLower(strings.TrimSpace(input.ProviderName)),
+		Title:        strings.TrimSpace(input.Title),
+		Metadata:     input.Metadata,
+		ExpiresAt:    input.ExpiresAt,
 	}
-	rec, err := s.repo.Upsert(ctx, UpsertParams{
-		UserID:          input.UserID,
-		ProviderName:    input.ProviderName,
-		EncryptedKey:    ciphertext,
-		EncryptionKeyID: s.enc.ActiveKeyID(),
-		Metadata:        input.Metadata,
-		ExpiresAt:       input.ExpiresAt,
-		LastInteraction: time.Now().UTC(),
-	})
+	sess, err := s.repo.Create(ctx, params)
 	if err != nil {
 		return SessionDetails{}, err
 	}
-	return toDetails(rec, input.ProviderKey), nil
+	return toDetails(sess), nil
 }
 
-// GetSession loads and decrypts the provider session for the user.
-func (s *Service) GetSession(ctx context.Context, userID, provider string) (SessionDetails, error) {
-	rec, err := s.repo.Get(ctx, userID, provider)
+// GetSession retrieves a session scoped to the user.
+func (s *Service) GetSession(ctx context.Context, userID, sessionID string) (SessionDetails, error) {
+	if strings.TrimSpace(userID) == "" {
+		return SessionDetails{}, ErrUserIDRequired
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return SessionDetails{}, ErrSessionIDRequired
+	}
+	sess, err := s.repo.Get(ctx, userID, sessionID)
 	if err != nil {
 		return SessionDetails{}, err
 	}
-	plaintext, err := s.enc.Decrypt(rec.EncryptedKey)
-	if err != nil {
-		return SessionDetails{}, fmt.Errorf("decrypt provider key: %w", err)
-	}
-	return toDetails(rec, string(plaintext)), nil
+	return toDetails(sess), nil
 }
 
-// RecordUsage increments the token counter and updates interaction metadata.
+// ListSessions returns the most recent sessions for a user.
+func (s *Service) ListSessions(ctx context.Context, input ListSessionsInput) ([]SessionDetails, error) {
+	if strings.TrimSpace(input.UserID) == "" {
+		return nil, ErrUserIDRequired
+	}
+	params := ListParams{
+		UserID:          strings.TrimSpace(input.UserID),
+		ProviderName:    strings.ToLower(strings.TrimSpace(input.ProviderName)),
+		Limit:           input.Limit,
+		IncludeArchived: input.IncludeArchived,
+	}
+	sessions, err := s.repo.List(ctx, params)
+	if err != nil {
+		return nil, err
+	}
+	results := make([]SessionDetails, 0, len(sessions))
+	for _, s := range sessions {
+		results = append(results, toDetails(s))
+	}
+	return results, nil
+}
+
+// RecordUsage updates interaction metrics for a session.
 func (s *Service) RecordUsage(ctx context.Context, input UsageInput) (SessionDetails, error) {
 	if strings.TrimSpace(input.UserID) == "" {
 		return SessionDetails{}, ErrUserIDRequired
@@ -100,12 +115,16 @@ func (s *Service) RecordUsage(ctx context.Context, input UsageInput) (SessionDet
 	if strings.TrimSpace(input.ProviderName) == "" {
 		return SessionDetails{}, ErrProviderRequired
 	}
+	if strings.TrimSpace(input.SessionID) == "" {
+		return SessionDetails{}, ErrSessionIDRequired
+	}
 	if input.LastInteraction.IsZero() {
 		input.LastInteraction = time.Now().UTC()
 	}
 	rec, err := s.repo.UpdateUsage(ctx, UsageUpdateParams{
+		SessionID:       input.SessionID,
 		UserID:          input.UserID,
-		ProviderName:    input.ProviderName,
+		ProviderName:    strings.ToLower(strings.TrimSpace(input.ProviderName)),
 		TokensDelta:     input.TokensDelta,
 		LastInteraction: input.LastInteraction,
 		Metadata:        input.Metadata,
@@ -114,48 +133,46 @@ func (s *Service) RecordUsage(ctx context.Context, input UsageInput) (SessionDet
 	if err != nil {
 		return SessionDetails{}, err
 	}
-	plaintext, err := s.enc.Decrypt(rec.EncryptedKey)
-	if err != nil {
-		return SessionDetails{}, fmt.Errorf("decrypt provider key: %w", err)
-	}
-	return toDetails(rec, string(plaintext)), nil
+	return toDetails(rec), nil
 }
 
-// ResetSession removes the stored provider secret for the user.
-func (s *Service) ResetSession(ctx context.Context, userID, provider string) error {
+// ArchiveSession marks a session as archived.
+func (s *Service) ArchiveSession(ctx context.Context, userID, sessionID string) error {
 	if strings.TrimSpace(userID) == "" {
 		return ErrUserIDRequired
 	}
-	if strings.TrimSpace(provider) == "" {
-		return ErrProviderRequired
+	if strings.TrimSpace(sessionID) == "" {
+		return ErrSessionIDRequired
 	}
-	return s.repo.Delete(ctx, userID, provider)
+	return s.repo.Archive(ctx, userID, sessionID)
 }
 
-func validateSetKeyInput(input SetKeyInput) error {
+func validateCreateInput(input CreateSessionInput) error {
 	if strings.TrimSpace(input.UserID) == "" {
 		return ErrUserIDRequired
 	}
 	if strings.TrimSpace(input.ProviderName) == "" {
 		return ErrProviderRequired
 	}
-	if strings.TrimSpace(input.ProviderKey) == "" {
-		return ErrProviderKeyRequired
+	if strings.TrimSpace(input.Title) == "" {
+		return ErrTitleRequired
 	}
 	return nil
 }
 
-func toDetails(session Session, providerKey string) SessionDetails {
+func toDetails(session Session) SessionDetails {
 	meta := session.Metadata
 	if meta == nil {
 		meta = map[string]any{}
 	}
 	return SessionDetails{
+		ID:              session.ID,
 		ProviderName:    session.ProviderName,
-		ProviderKey:     providerKey,
+		Title:           session.Title,
 		LastInteraction: session.LastInteraction,
 		TotalTokensUsed: session.TotalTokensUsed,
 		ExpiresAt:       session.ExpiresAt,
 		Metadata:        meta,
+		ArchivedAt:      session.ArchivedAt,
 	}
 }

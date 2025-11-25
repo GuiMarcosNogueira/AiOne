@@ -9,6 +9,7 @@ import (
 type Entry struct {
 	ID              int64     `json:"id"`
 	UserID          string    `json:"user_id"`
+	SessionID       string    `json:"session_id,omitempty"`
 	ProviderName    string    `json:"provider_name"`
 	Role            string    `json:"role"`
 	Message         string    `json:"message,omitempty"`
@@ -21,6 +22,7 @@ type Entry struct {
 // SaveMessageInput captures the data required to store a text message.
 type SaveMessageInput struct {
 	UserID       string
+	SessionID    string
 	ProviderName string
 	Role         string
 	Message      string
@@ -30,6 +32,7 @@ type SaveMessageInput struct {
 // SaveMediaInput captures the metadata required to store a media reference.
 type SaveMediaInput struct {
 	UserID       string
+	SessionID    string
 	ProviderName string
 	Role         string
 	MediaType    string

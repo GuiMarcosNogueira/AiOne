@@ -2,10 +2,11 @@ package providersessions
 
 import "context"
 
-// Repository defines persistence behaviour for provider sessions.
+// Repository defines persistence behaviour for conversational sessions.
 type Repository interface {
-	Upsert(ctx context.Context, params UpsertParams) (Session, error)
-	Get(ctx context.Context, userID, provider string) (Session, error)
+	Create(ctx context.Context, params CreateParams) (Session, error)
+	Get(ctx context.Context, userID, sessionID string) (Session, error)
+	List(ctx context.Context, params ListParams) ([]Session, error)
 	UpdateUsage(ctx context.Context, params UsageUpdateParams) (Session, error)
-	Delete(ctx context.Context, userID, provider string) error
+	Archive(ctx context.Context, userID, sessionID string) error
 }

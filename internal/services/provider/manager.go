@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	"log/slog"
+
 	"golang.org/x/time/rate"
 
 	"github.com/midia/aione/internal/providers"
@@ -31,6 +33,8 @@ var (
 	ErrRateLimited = errors.New("provider rate limited")
 	// ErrUnknownProvider indicates the requested provider name is not registered.
 	ErrUnknownProvider = errors.New("unknown provider")
+	// ErrModelCatalogUnavailable indicates the provider does not expose its model catalog.
+	ErrModelCatalogUnavailable = errors.New("model catalog unavailable")
 )
 
 // Strategy defines how the manager should pick a provider when multiple can
@@ -38,10 +42,11 @@ var (
 type Strategy string
 
 const (
-	StrategyFirst Strategy = "first"
-	StrategyFast  Strategy = "fast"
-	StrategyCheap Strategy = "cheap"
-	StrategyBest  Strategy = "bestOf"
+	StrategyFirst           Strategy = "first"
+	StrategyFast            Strategy = "fast"
+	StrategyCheap           Strategy = "cheap"
+	StrategyBest            Strategy = "bestOf"
+	defaultProviderLogBytes          = 2048
 )
 
 // ParseStrategy normalizes untrusted values.
@@ -215,7 +220,16 @@ func WithCache(cache Cache, ttl time.Duration) Option {
 	}
 }
 
-// Manager coordinates calls across the registered providers.
+// WithProviderLogging enables structured logging for provider requests/responses.
+func WithProviderLogging(logger *slog.Logger, enabled bool) Option {
+	return func(m *Manager) {
+		if logger != nil {
+			m.log = logger
+		}
+		m.logProviders = enabled
+	}
+}
+
 type Manager struct {
 	mu               sync.RWMutex
 	registry         map[string]*providerState
@@ -224,6 +238,9 @@ type Manager struct {
 	failoverAttempts int
 	breakerCfg       CircuitBreakerConfig
 	cache            *cacheLayer
+	log              *slog.Logger
+	logProviders     bool
+	logMaxBytes      int
 }
 
 type cacheLayer struct {
@@ -240,6 +257,8 @@ func NewManager(list []providers.Provider, opts ...Option) *Manager {
 			FailureThreshold: 3,
 			Cooldown:         30 * time.Second,
 		},
+		log:         slog.Default(),
+		logMaxBytes: defaultProviderLogBytes,
 	}
 	for _, opt := range opts {
 		opt(m)
@@ -308,6 +327,54 @@ func (m *Manager) CapabilityMatrix() []CapabilityMatrixEntry {
 		}
 	}
 	return matrix
+}
+
+// ModelCatalog returns the catalog of models for the requested provider.
+func (m *Manager) ModelCatalog(ctx context.Context, providerName string) ([]providers.ModelDescriptor, error) {
+	if m == nil {
+		return nil, ErrNoProviders
+	}
+	state := m.providerByName(providerName)
+	if state == nil {
+		return nil, ErrUnknownProvider
+	}
+	lister, ok := state.impl.(providers.ModelLister)
+	if !ok {
+		return nil, ErrModelCatalogUnavailable
+	}
+	models, err := lister.ListModels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return models, nil
+}
+
+// AllModelCatalogs aggregates every provider catalog that is available.
+func (m *Manager) AllModelCatalogs(ctx context.Context) map[string][]providers.ModelDescriptor {
+	result := make(map[string][]providers.ModelDescriptor)
+	if m == nil {
+		return result
+	}
+	m.mu.RLock()
+	states := make([]*providerState, 0, len(m.order))
+	for _, name := range m.order {
+		if state, ok := m.registry[name]; ok {
+			states = append(states, state)
+		}
+	}
+	m.mu.RUnlock()
+	for _, state := range states {
+		lister, ok := state.impl.(providers.ModelLister)
+		if !ok {
+			continue
+		}
+		models, err := lister.ListModels(ctx)
+		if err != nil || len(models) == 0 {
+			continue
+		}
+		result[state.impl.Name()] = models
+	}
+	return result
 }
 
 func (m *Manager) capabilityCandidates(predicate capabilityPredicate) []*providerState {
@@ -511,7 +578,10 @@ func execute[T any](m *Manager, ctx context.Context, namespace string, req any, 
 			lastErr = ErrRateLimited
 			continue
 		}
+		attempt := idx + 1
+		callStart := time.Now()
 		response, err := call(ctx, state.impl)
+		m.logProviderAttempt(namespace, state.impl.Name(), attempt, req, response, err, time.Since(callStart))
 		success := err == nil
 		state.breaker.Report(success, time.Now(), m.breakerCfg)
 		if err != nil {
@@ -542,6 +612,18 @@ func (m *Manager) TextGenerate(ctx context.Context, req dto.TextReq) (Result[dto
 func (m *Manager) ImageGenerate(ctx context.Context, req dto.ImageReq) (Result[dto.ImageResp], error) {
 	return execute(m, ctx, "image", req, true, func(c providers.Capabilities) bool { return c.ImageGeneration }, func(ctx context.Context, provider providers.Provider) (dto.ImageResp, error) {
 		return provider.ImageGenerate(ctx, req)
+	})
+}
+
+// ImageEdit proxies an image editing request to a provider that supports inpainting.
+func (m *Manager) ImageEdit(ctx context.Context, req dto.ImageEditReq) (Result[dto.ImageResp], error) {
+	return execute(m, ctx, "image-edit", req, false, func(c providers.Capabilities) bool {
+		if c.ImageEditing {
+			return true
+		}
+		return c.ImageGeneration
+	}, func(ctx context.Context, provider providers.Provider) (dto.ImageResp, error) {
+		return provider.ImageEdit(ctx, req)
 	})
 }
 
@@ -584,4 +666,40 @@ func (m *Manager) hasProviders() bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return len(m.registry) > 0
+}
+
+func (m *Manager) logProviderAttempt(namespace, providerName string, attempt int, req any, resp any, callErr error, duration time.Duration) {
+	if !m.logProviders || m == nil || m.log == nil {
+		return
+	}
+	fields := []slog.Attr{
+		slog.String("capability", namespace),
+		slog.String("provider", providerName),
+		slog.Int("attempt", attempt),
+		slog.Duration("duration", duration),
+		slog.String("request", m.formatPayload(req)),
+	}
+	if callErr != nil {
+		fields = append(fields, slog.String("error", callErr.Error()))
+		m.log.LogAttrs(context.Background(), slog.LevelError, "provider request", fields...)
+		return
+	}
+	fields = append(fields, slog.String("response", m.formatPayload(resp)))
+	m.log.LogAttrs(context.Background(), slog.LevelInfo, "provider request", fields...)
+}
+
+func (m *Manager) formatPayload(value any) string {
+	if value == nil || m == nil {
+		return ""
+	}
+	var raw []byte
+	if data, err := json.Marshal(value); err == nil {
+		raw = data
+	} else {
+		raw = []byte(fmt.Sprintf("%+v", value))
+	}
+	if limit := m.logMaxBytes; limit > 0 && len(raw) > limit {
+		return string(raw[:limit]) + "..."
+	}
+	return string(raw)
 }

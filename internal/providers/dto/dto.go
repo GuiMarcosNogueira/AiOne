@@ -44,6 +44,18 @@ type ImageResp struct {
 	URL string `json:"url"`
 }
 
+// ImageEditReq captures an edit/inpainting request applied to an existing image.
+type ImageEditReq struct {
+	ProviderOverride
+	Prompt      string       `json:"prompt"`
+	ImageURL    string       `json:"image_url,omitempty"`
+	ImageBase64 string       `json:"image_base64,omitempty"`
+	MaskURL     string       `json:"mask_url,omitempty"`
+	MaskBase64  string       `json:"mask_base64,omitempty"`
+	Size        string       `json:"size,omitempty"`
+	Media       []MediaInput `json:"media,omitempty"`
+}
+
 // VideoReq captures inputs for requesting video content.
 type VideoReq struct {
 	ProviderOverride

@@ -28,28 +28,38 @@ func (h *HistoryAPI) Handler() http.Handler {
 }
 
 func (h *HistoryAPI) handle(w http.ResponseWriter, r *http.Request) {
-	provider, tail := splitHistoryPath(strings.TrimPrefix(r.URL.Path, "/history/"))
-	if provider == "" {
+	sessionID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/history/"), "/")
+	if sessionID == "" {
 		http.NotFound(w, r)
 		return
 	}
-	switch {
-	case r.Method == http.MethodGet && tail == "":
-		h.list(w, r, provider)
-	case r.Method == http.MethodDelete && tail == "clear":
-		h.clear(w, r, provider)
+	switch r.Method {
+	case http.MethodGet:
+		h.listSession(w, r, sessionID)
+	case http.MethodDelete:
+		h.deleteSession(w, r, sessionID)
 	default:
-		http.NotFound(w, r)
+		h.methodNotAllowed(w, http.MethodGet+", "+http.MethodDelete)
 	}
 }
 
-func (h *HistoryAPI) list(w http.ResponseWriter, r *http.Request, provider string) {
+// listSession handles GET /history/{session_id} requests.
+// @Summary        Fetch session history
+// @Tags           history
+// @Security       BearerAuth
+// @Produce        json
+// @Param          session_id path string true "Session identifier"
+// @Success        200 {object} ResponseEnvelope
+// @Failure        401 {object} ResponseEnvelope
+// @Failure        500 {object} ResponseEnvelope
+// @Router         /history/{session_id} [get]
+func (h *HistoryAPI) listSession(w http.ResponseWriter, r *http.Request, sessionID string) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok {
 		http.Error(w, "missing auth context", http.StatusUnauthorized)
 		return
 	}
-	entries, err := h.service.ListHistory(r.Context(), claims.UserID, provider)
+	entries, err := h.service.ListSessionHistory(r.Context(), claims.UserID, sessionID)
 	if err != nil {
 		h.log.Error("list history failed", slog.Any("error", err))
 		h.writeJSON(w, http.StatusInternalServerError, responseEnvelope{Error: "failed to load history"})
@@ -58,13 +68,23 @@ func (h *HistoryAPI) list(w http.ResponseWriter, r *http.Request, provider strin
 	h.writeJSON(w, http.StatusOK, responseEnvelope{Data: entries})
 }
 
-func (h *HistoryAPI) clear(w http.ResponseWriter, r *http.Request, provider string) {
+// deleteSession handles DELETE /history/{session_id} requests.
+// @Summary        Delete session history
+// @Tags           history
+// @Security       BearerAuth
+// @Produce        json
+// @Param          session_id path string true "Session identifier"
+// @Success        200 {object} ResponseEnvelope
+// @Failure        401 {object} ResponseEnvelope
+// @Failure        500 {object} ResponseEnvelope
+// @Router         /history/{session_id} [delete]
+func (h *HistoryAPI) deleteSession(w http.ResponseWriter, r *http.Request, sessionID string) {
 	claims, ok := auth.ClaimsFromContext(r.Context())
 	if !ok {
 		http.Error(w, "missing auth context", http.StatusUnauthorized)
 		return
 	}
-	if err := h.service.DeleteHistory(r.Context(), claims.UserID, provider); err != nil {
+	if err := h.service.DeleteSessionHistory(r.Context(), claims.UserID, sessionID); err != nil {
 		h.log.Error("delete history failed", slog.Any("error", err))
 		h.writeJSON(w, http.StatusInternalServerError, responseEnvelope{Error: "failed to clear history"})
 		return
@@ -80,15 +100,7 @@ func (h *HistoryAPI) writeJSON(w http.ResponseWriter, status int, payload respon
 	}
 }
 
-func splitHistoryPath(path string) (provider string, tail string) {
-	trimmed := strings.Trim(path, "/")
-	if trimmed == "" {
-		return "", ""
-	}
-	parts := strings.SplitN(trimmed, "/", 2)
-	provider = parts[0]
-	if len(parts) > 1 {
-		tail = parts[1]
-	}
-	return provider, tail
+func (h *HistoryAPI) methodNotAllowed(w http.ResponseWriter, allowed string) {
+	w.Header().Set("Allow", allowed)
+	h.writeJSON(w, http.StatusMethodNotAllowed, responseEnvelope{Error: "method not allowed"})
 }

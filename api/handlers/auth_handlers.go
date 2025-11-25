@@ -53,6 +53,17 @@ func (a *AuthAPI) LogoutHandler() http.Handler {
 	return http.HandlerFunc(a.logout)
 }
 
+// register handles POST /auth/register requests.
+// @Summary        Register a new user
+// @Tags           auth
+// @Accept         json
+// @Produce        json
+// @Param          request body auth.RegisterInput true "Registration payload"
+// @Success        200 {object} ResponseEnvelope
+// @Failure        400 {object} ResponseEnvelope
+// @Failure        409 {object} ResponseEnvelope
+// @Failure        500 {object} ResponseEnvelope
+// @Router         /auth/register [post]
 func (a *AuthAPI) register(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		a.methodNotAllowed(w, http.MethodPost)
@@ -73,6 +84,17 @@ func (a *AuthAPI) register(w http.ResponseWriter, r *http.Request) {
 	a.writeJSON(w, http.StatusOK, responseEnvelope{Data: resp})
 }
 
+// login handles POST /auth/login requests.
+// @Summary        Log in
+// @Tags           auth
+// @Accept         json
+// @Produce        json
+// @Param          request body auth.LoginInput true "Login payload"
+// @Success        200 {object} ResponseEnvelope
+// @Failure        400 {object} ResponseEnvelope
+// @Failure        401 {object} ResponseEnvelope
+// @Failure        500 {object} ResponseEnvelope
+// @Router         /auth/login [post]
 func (a *AuthAPI) login(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		a.methodNotAllowed(w, http.MethodPost)
@@ -93,6 +115,17 @@ func (a *AuthAPI) login(w http.ResponseWriter, r *http.Request) {
 	a.writeJSON(w, http.StatusOK, responseEnvelope{Data: resp})
 }
 
+// refresh handles POST /auth/refresh token rotation.
+// @Summary        Refresh tokens
+// @Tags           auth
+// @Accept         json
+// @Produce        json
+// @Param          request body auth.RefreshInput true "Refresh payload"
+// @Success        200 {object} ResponseEnvelope
+// @Failure        400 {object} ResponseEnvelope
+// @Failure        401 {object} ResponseEnvelope
+// @Failure        500 {object} ResponseEnvelope
+// @Router         /auth/refresh [post]
 func (a *AuthAPI) refresh(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		a.methodNotAllowed(w, http.MethodPost)
@@ -113,14 +146,23 @@ func (a *AuthAPI) refresh(w http.ResponseWriter, r *http.Request) {
 	a.writeJSON(w, http.StatusOK, responseEnvelope{Data: resp})
 }
 
+// logout handles POST /auth/logout requests.
+// @Summary        Logout
+// @Tags           auth
+// @Accept         json
+// @Produce        json
+// @Param          request body auth.RefreshInput true "Logout payload"
+// @Success        200 {object} ResponseEnvelope
+// @Failure        400 {object} ResponseEnvelope
+// @Failure        401 {object} ResponseEnvelope
+// @Failure        500 {object} ResponseEnvelope
+// @Router         /auth/logout [post]
 func (a *AuthAPI) logout(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		a.methodNotAllowed(w, http.MethodPost)
 		return
 	}
-	var payload struct {
-		RefreshToken string `json:"refresh_token"`
-	}
+	var payload auth.RefreshInput
 	if err := decodeBody(r, &payload); err != nil {
 		a.writeJSON(w, http.StatusBadRequest, responseEnvelope{Error: err.Error()})
 		return

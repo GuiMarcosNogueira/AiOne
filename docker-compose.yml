@@ -1,6 +1,44 @@
-version: "3.9"
-
 services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aione
+      POSTGRES_PASSWORD: aione
+      POSTGRES_DB: aione
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aione -d aione"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  storage:
+    image: nginx:1.27-alpine
+    volumes:
+      - storage_data:/srv/media:ro
+      - ./scripts/storage-nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "8090:80"
+    restart: unless-stopped
+
   api:
     build:
       context: .
@@ -8,10 +46,45 @@ services:
     env_file:
       - .env
     environment:
-      DATABASE_URL: ${DATABASE_URL:-postgres://aione:aione@host.docker.internal:5432/aione?sslmode=disable}
-      REDIS_ADDR: ${REDIS_ADDR:-host.docker.internal:6379}
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgres://aione:aione@postgres:5432/aione?sslmode=disable}
+      REDIS_ADDR: ${REDIS_ADDR_DOCKER:-redis:6379}
       PROVIDER_STRATEGY: ${PROVIDER_STRATEGY:-first}
       GENERIC_PROVIDER_CONFIG_DIR: /app/internal/providers/config
+      UPLOAD_DIR: ${UPLOAD_DIR_DOCKER:-/app/storage}
+      STORAGE_PUBLIC_BASE_URL: ${STORAGE_PUBLIC_BASE_URL_DOCKER:-http://localhost:8090/media}
+      STORAGE_SERVE_FROM_API: ${STORAGE_SERVE_FROM_API_DOCKER:-false}
+      AUTH_SESSION_REDIS_ADDR: ${AUTH_SESSION_REDIS_ADDR_DOCKER:-redis:6379}
+      AUTH_RATELIMIT_REDIS_ADDR: ${AUTH_RATELIMIT_REDIS_ADDR_DOCKER:-redis:6379}
     ports:
-      - "8080:8080"
+      - "8089:8089"
+    volumes:
+      - storage_data:/app/storage
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      storage:
+        condition: service_started
     restart: unless-stopped
+
+  migrate:
+    image: postgres:16-alpine
+    entrypoint: ["/bin/sh", "/run_migrations.sh"]
+    volumes:
+      - ./migrations:/migrations:ro
+      - ./scripts/run_migrations.sh:/run_migrations.sh:ro
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgres://aione:aione@postgres:5432/aione?sslmode=disable}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
+  storage_data:

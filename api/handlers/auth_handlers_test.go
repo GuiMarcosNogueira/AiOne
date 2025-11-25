@@ -67,7 +67,8 @@ func TestAuthLoginRateLimited(t *testing.T) {
 	t.Cleanup(mr.Close)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
-	limiter, err := auth.NewRateLimiter(client, time.Second, 1)
+	// Use a wide window to avoid Argon2 verification time pushing the second request outside the limit.
+	limiter, err := auth.NewRateLimiter(client, 10*time.Second, 1)
 	if err != nil {
 		t.Fatalf("rate limiter: %v", err)
 	}

@@ -27,6 +27,7 @@ type httpClient interface {
 const (
 	endpointText       endpointKind = "text"
 	endpointImage      endpointKind = "image"
+	endpointImageEdit  endpointKind = "image_edit"
 	endpointVideo      endpointKind = "video"
 	endpointSTT        endpointKind = "stt"
 	endpointTTS        endpointKind = "tts"
@@ -85,6 +86,9 @@ func NewFromConfig(cfg FileConfig, opts ...Option) (providers.Provider, error) {
 	}
 	if err := p.registerEndpoint(endpointImage, cfg.Endpoints.Image); err != nil {
 		return nil, fmt.Errorf("configure image endpoint: %w", err)
+	}
+	if err := p.registerEndpoint(endpointImageEdit, cfg.Endpoints.ImageEdit); err != nil {
+		return nil, fmt.Errorf("configure image edit endpoint: %w", err)
 	}
 	if err := p.registerEndpoint(endpointVideo, cfg.Endpoints.Video); err != nil {
 		return nil, fmt.Errorf("configure video endpoint: %w", err)
@@ -184,6 +188,18 @@ func (p *Provider) TextGenerate(ctx context.Context, req dto.TextReq) (dto.TextR
 
 func (p *Provider) ImageGenerate(ctx context.Context, req dto.ImageReq) (dto.ImageResp, error) {
 	result, err := p.invoke(ctx, endpointImage, req)
+	if err != nil {
+		return dto.ImageResp{}, err
+	}
+	url, err := extractString(result.data, result.mapping.URLPath)
+	if err != nil {
+		return dto.ImageResp{}, err
+	}
+	return dto.ImageResp{URL: url}, nil
+}
+
+func (p *Provider) ImageEdit(ctx context.Context, req dto.ImageEditReq) (dto.ImageResp, error) {
+	result, err := p.invoke(ctx, endpointImageEdit, req)
 	if err != nil {
 		return dto.ImageResp{}, err
 	}

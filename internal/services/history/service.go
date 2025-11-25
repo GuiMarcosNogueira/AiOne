@@ -16,6 +16,8 @@ var (
 	ErrUserIDRequired = errors.New("user id required")
 	// ErrProviderRequired indicates a missing provider name.
 	ErrProviderRequired = errors.New("provider name required")
+	// ErrSessionIDRequired indicates a missing session identifier.
+	ErrSessionIDRequired = errors.New("session id required")
 	// ErrRoleRequired indicates a missing message role.
 	ErrRoleRequired = errors.New("role required")
 	// ErrStorageUnavailable indicates SaveMedia was called without a storage backend.
@@ -50,6 +52,7 @@ func (s *Service) SaveMessage(ctx context.Context, input SaveMessageInput) (Entr
 	}
 	params := InsertParams{
 		UserID:          input.UserID,
+		SessionID:       strings.TrimSpace(input.SessionID),
 		ProviderName:    strings.ToLower(strings.TrimSpace(input.ProviderName)),
 		Role:            strings.ToLower(strings.TrimSpace(input.Role)),
 		Message:         input.Message,
@@ -82,6 +85,7 @@ func (s *Service) SaveMedia(ctx context.Context, input SaveMediaInput) (Entry, e
 	}
 	params := InsertParams{
 		UserID:          input.UserID,
+		SessionID:       strings.TrimSpace(input.SessionID),
 		ProviderName:    strings.ToLower(strings.TrimSpace(input.ProviderName)),
 		Role:            strings.ToLower(strings.TrimSpace(input.Role)),
 		MediaType:       input.MediaType,
@@ -107,6 +111,22 @@ func (s *Service) DeleteHistory(ctx context.Context, userID, provider string) er
 	return s.repo.DeleteAll(ctx, userID, strings.ToLower(strings.TrimSpace(provider)))
 }
 
+// ListSessionHistory returns ordered entries for a given user/session pair.
+func (s *Service) ListSessionHistory(ctx context.Context, userID, sessionID string) ([]Entry, error) {
+	if err := validateUserSession(userID, sessionID); err != nil {
+		return nil, err
+	}
+	return s.repo.ListBySession(ctx, userID, sessionID)
+}
+
+// DeleteSessionHistory removes all entries for the provided session.
+func (s *Service) DeleteSessionHistory(ctx context.Context, userID, sessionID string) error {
+	if err := validateUserSession(userID, sessionID); err != nil {
+		return err
+	}
+	return s.repo.DeleteSession(ctx, userID, sessionID)
+}
+
 // TruncateHistoryToTokenLimit removes the oldest messages until the total estimated tokens fits within limit.
 // It returns how many entries were deleted.
 func (s *Service) TruncateHistoryToTokenLimit(ctx context.Context, userID, provider string, limit int) (int, error) {
@@ -117,6 +137,36 @@ func (s *Service) TruncateHistoryToTokenLimit(ctx context.Context, userID, provi
 		return 0, nil
 	}
 	entries, err := s.repo.List(ctx, userID, strings.ToLower(strings.TrimSpace(provider)))
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	toDelete := make([]int64, 0)
+	for i := len(entries) - 1; i >= 0; i-- {
+		entry := entries[i]
+		total += max(entry.TokensEstimated, 1)
+		if total > limit {
+			toDelete = append(toDelete, entry.ID)
+		}
+	}
+	if len(toDelete) == 0 {
+		return 0, nil
+	}
+	if err := s.repo.DeleteIDs(ctx, toDelete); err != nil {
+		return 0, err
+	}
+	return len(toDelete), nil
+}
+
+// TruncateSessionHistoryToTokenLimit removes session entries to honor the provided budget.
+func (s *Service) TruncateSessionHistoryToTokenLimit(ctx context.Context, userID, sessionID string, limit int) (int, error) {
+	if err := validateUserSession(userID, sessionID); err != nil {
+		return 0, err
+	}
+	if limit <= 0 {
+		return 0, nil
+	}
+	entries, err := s.repo.ListBySession(ctx, userID, sessionID)
 	if err != nil {
 		return 0, err
 	}
@@ -163,11 +213,8 @@ func FormatContext(entries []Entry) string {
 	})
 	var b strings.Builder
 	for _, entry := range entries {
-		role := strings.ToUpper(entry.Role)
-		if role == "" {
-			role = "USER"
-		}
-		b.WriteString(role)
+		label := contextLabel(entry.Role)
+		b.WriteString(label)
 		b.WriteString(": ")
 		if entry.Message != "" {
 			b.WriteString(entry.Message)
@@ -190,12 +237,35 @@ func FormatContext(entries []Entry) string {
 	return strings.TrimSpace(b.String())
 }
 
+func contextLabel(role string) string {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "", "user":
+		return "Previous user message"
+	case "assistant":
+		return "Previous assistant reply"
+	case "system":
+		return "System note"
+	default:
+		return fmt.Sprintf("Previous %s message", role)
+	}
+}
+
 func validateUserProvider(userID, provider string) error {
 	if strings.TrimSpace(userID) == "" {
 		return ErrUserIDRequired
 	}
 	if strings.TrimSpace(provider) == "" {
 		return ErrProviderRequired
+	}
+	return nil
+}
+
+func validateUserSession(userID, sessionID string) error {
+	if strings.TrimSpace(userID) == "" {
+		return ErrUserIDRequired
+	}
+	if strings.TrimSpace(sessionID) == "" {
+		return ErrSessionIDRequired
 	}
 	return nil
 }

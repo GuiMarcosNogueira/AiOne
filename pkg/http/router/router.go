@@ -3,13 +3,13 @@ package router
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"log/slog"
 
 	"github.com/midia/aione/api/handlers"
 	"github.com/midia/aione/internal/services/health"
+	httpSwagger "github.com/swaggo/http-swagger/v2"
 )
 
 // HealthChecker abstracts the health service dependency.
@@ -17,10 +17,8 @@ type HealthChecker interface {
 	Check(ctx context.Context) []health.Status
 }
 
-var openAPIPath = "openapi.yaml"
-
 // New builds the API mux wiring mandatory routes.
-func New(log *slog.Logger, healthSvc HealthChecker, apiHandlers *handlers.API, authHandlers *handlers.AuthAPI, providerSessionHandler http.Handler, historyHandler http.Handler, conversationHandler http.Handler, authMiddleware func(http.Handler) http.Handler) http.Handler {
+func New(log *slog.Logger, healthSvc HealthChecker, apiHandlers *handlers.API, authHandlers *handlers.AuthAPI, providerSessionHandler http.Handler, historyHandler http.Handler, conversationHandler http.Handler, mediaHandler http.Handler, authMiddleware func(http.Handler) http.Handler) http.Handler {
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -33,12 +31,14 @@ func New(log *slog.Logger, healthSvc HealthChecker, apiHandlers *handlers.API, a
 
 	mux.HandleFunc("/v1/chat", apiHandlers.Chat)
 	mux.HandleFunc("/v1/image", apiHandlers.Image)
+	mux.HandleFunc("/v1/image/edit", apiHandlers.ImageEdit)
 	mux.HandleFunc("/v1/video", apiHandlers.Video)
 	mux.HandleFunc("/v1/stt", apiHandlers.STT)
 	mux.HandleFunc("/v1/tts", apiHandlers.TTS)
 	mux.HandleFunc("/v1/embeddings", apiHandlers.Embeddings)
 	mux.HandleFunc("/v1/moderation", apiHandlers.Moderation)
 	mux.HandleFunc("/v1/providers", apiHandlers.Providers)
+	mux.HandleFunc("/v1/models", apiHandlers.Models)
 
 	if authHandlers != nil {
 		mux.Handle("/auth/register", authHandlers.RegisterHandler())
@@ -59,16 +59,27 @@ func New(log *slog.Logger, healthSvc HealthChecker, apiHandlers *handlers.API, a
 		mux.Handle("/session/", authMiddleware(conversationHandler))
 	}
 
-	mux.HandleFunc("/openapi.yaml", func(w http.ResponseWriter, r *http.Request) {
-		http.ServeFile(w, r, openAPIPath)
-	})
+	mux.Handle("/docs", http.RedirectHandler("/docs/", http.StatusPermanentRedirect))
+	mux.Handle("/docs/", httpSwagger.Handler())
 
-	mux.HandleFunc("/docs", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		_, _ = fmt.Fprint(w, swaggerHTML("/openapi.yaml"))
-	})
+	if mediaHandler != nil {
+		mux.Handle("/media/", mediaHandler)
+	}
 
-	return mux
+	return withCORS(mux)
+}
+
+func withCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Authorization")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func writeJSON(w http.ResponseWriter, log *slog.Logger, status int, payload any) {
@@ -77,27 +88,4 @@ func writeJSON(w http.ResponseWriter, log *slog.Logger, status int, payload any)
 	if err := json.NewEncoder(w).Encode(payload); err != nil {
 		log.Error("failed to encode response", slog.Any("error", err))
 	}
-}
-
-func swaggerHTML(specURL string) string {
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html lang="en">
-<head>
-	<meta charset="UTF-8">
-	<title>AI Aggregator API Docs</title>
-	<link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@5/swagger-ui.css" />
-</head>
-<body>
-	<div id="swagger-ui"></div>
-	<script src="https://unpkg.com/swagger-ui-dist@5/swagger-ui-bundle.js" crossorigin></script>
-	<script>
-		window.onload = () => {
-			window.ui = SwaggerUIBundle({
-				url: '%s',
-				dom_id: '#swagger-ui',
-			});
-		};
-	</script>
-</body>
-</html>`, specURL)
 }

@@ -6,12 +6,15 @@ import "context"
 type Repository interface {
 	Insert(ctx context.Context, params InsertParams) (Entry, error)
 	List(ctx context.Context, userID, provider string) ([]Entry, error)
+	ListBySession(ctx context.Context, userID, sessionID string) ([]Entry, error)
 	DeleteAll(ctx context.Context, userID, provider string) error
+	DeleteSession(ctx context.Context, userID, sessionID string) error
 	DeleteIDs(ctx context.Context, ids []int64) error
 }
 
 type InsertParams struct {
 	UserID          string
+	SessionID       string
 	ProviderName    string
 	Role            string
 	Message         string

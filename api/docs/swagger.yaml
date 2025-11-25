@@ -1,0 +1,1249 @@
+basePath: /
+consumes:
+- application/json
+definitions:
+  auth.LoginInput:
+    properties:
+      email:
+        type: string
+      password:
+        type: string
+    type: object
+  auth.RefreshInput:
+    properties:
+      refresh_token:
+        type: string
+    type: object
+  auth.RegisterInput:
+    properties:
+      display_name:
+        type: string
+      email:
+        type: string
+      locale:
+        type: string
+      password:
+        type: string
+      preferences:
+        additionalProperties: {}
+        type: object
+      timezone:
+        type: string
+    type: object
+  dto.EmbeddingsReq:
+    properties:
+      inputs:
+        items:
+          type: string
+        type: array
+      model:
+        type: string
+      provider:
+        type: string
+    type: object
+  dto.ImageEditReq:
+    properties:
+      image_base64:
+        type: string
+      image_url:
+        type: string
+      mask_base64:
+        type: string
+      mask_url:
+        type: string
+      media:
+        items:
+          $ref: '#/definitions/dto.MediaInput'
+        type: array
+      prompt:
+        type: string
+      provider:
+        type: string
+      size:
+        type: string
+    type: object
+  dto.ImageReq:
+    properties:
+      media:
+        items:
+          $ref: '#/definitions/dto.MediaInput'
+        type: array
+      prompt:
+        type: string
+      provider:
+        type: string
+      size:
+        type: string
+    type: object
+  dto.MediaInput:
+    properties:
+      data:
+        type: string
+      mime_type:
+        type: string
+      type:
+        type: string
+      url:
+        type: string
+    type: object
+  dto.ModerationReq:
+    properties:
+      input:
+        type: string
+      provider:
+        type: string
+    type: object
+  dto.STTReq:
+    properties:
+      audio_url:
+        type: string
+      language:
+        type: string
+      provider:
+        type: string
+    type: object
+  dto.TTSReq:
+    properties:
+      language:
+        type: string
+      provider:
+        type: string
+      text:
+        type: string
+      voice:
+        type: string
+    type: object
+  dto.TextReq:
+    properties:
+      max_tokens:
+        type: integer
+      media:
+        items:
+          $ref: '#/definitions/dto.MediaInput'
+        type: array
+      prompt:
+        type: string
+      provider:
+        type: string
+      temperature:
+        type: number
+    type: object
+  dto.VideoReq:
+    properties:
+      duration_seconds:
+        type: integer
+      media:
+        items:
+          $ref: '#/definitions/dto.MediaInput'
+        type: array
+      prompt:
+        type: string
+      provider:
+        type: string
+    type: object
+  handlers.ProviderSessionCreateRequest:
+    properties:
+      expires_at:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      title:
+        type: string
+    type: object
+  handlers.ResponseEnvelope:
+    properties:
+      data: {}
+      error:
+        type: string
+      provider:
+        type: string
+      session:
+        $ref: '#/definitions/providersessions.SessionDetails'
+    type: object
+  handlers.SessionAudioRequest:
+    properties:
+      audio_url:
+        type: string
+      expires_at:
+        type: string
+      language:
+        type: string
+      provider_key:
+        type: string
+      session_id:
+        type: string
+      session_metadata:
+        additionalProperties: {}
+        type: object
+      session_title:
+        type: string
+    type: object
+  handlers.SessionImageEditRequest:
+    properties:
+      expires_at:
+        type: string
+      image_base64:
+        type: string
+      image_url:
+        type: string
+      mask_base64:
+        type: string
+      mask_url:
+        type: string
+      media:
+        items:
+          $ref: '#/definitions/dto.MediaInput'
+        type: array
+      prompt:
+        type: string
+      provider_key:
+        type: string
+      session_id:
+        type: string
+      session_metadata:
+        additionalProperties: {}
+        type: object
+      session_title:
+        type: string
+      size:
+        type: string
+    type: object
+  handlers.SessionImageRequest:
+    properties:
+      expires_at:
+        type: string
+      media:
+        items:
+          $ref: '#/definitions/dto.MediaInput'
+        type: array
+      prompt:
+        type: string
+      provider_key:
+        type: string
+      session_id:
+        type: string
+      session_metadata:
+        additionalProperties: {}
+        type: object
+      session_title:
+        type: string
+      size:
+        type: string
+    type: object
+  handlers.SessionMessageRequest:
+    properties:
+      expires_at:
+        type: string
+      max_tokens:
+        type: integer
+      media:
+        items:
+          $ref: '#/definitions/dto.MediaInput'
+        type: array
+      prompt:
+        type: string
+      provider_key:
+        type: string
+      session_id:
+        type: string
+      session_metadata:
+        additionalProperties: {}
+        type: object
+      session_title:
+        type: string
+      temperature:
+        type: number
+    type: object
+  handlers.SessionVideoRequest:
+    properties:
+      duration_seconds:
+        type: integer
+      expires_at:
+        type: string
+      media:
+        items:
+          $ref: '#/definitions/dto.MediaInput'
+        type: array
+      prompt:
+        type: string
+      provider_key:
+        type: string
+      session_id:
+        type: string
+      session_metadata:
+        additionalProperties: {}
+        type: object
+      session_title:
+        type: string
+    type: object
+  providersessions.SessionDetails:
+    properties:
+      archived_at:
+        type: string
+      expires_at:
+        type: string
+      id:
+        type: string
+      last_interaction:
+        type: string
+      metadata:
+        additionalProperties: {}
+        type: object
+      provider_name:
+        type: string
+      title:
+        type: string
+      total_tokens_used:
+        type: integer
+    type: object
+info:
+  contact: {}
+  description: Unified AI gateway that proxies multiple providers.
+  title: AiOne API
+  version: "1.0"
+paths:
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Login payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/auth.LoginInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      summary: Log in
+      tags:
+      - auth
+  /auth/logout:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Logout payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/auth.RefreshInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      summary: Logout
+      tags:
+      - auth
+  /auth/refresh:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Refresh payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/auth.RefreshInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      summary: Refresh tokens
+      tags:
+      - auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Registration payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/auth.RegisterInput'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      summary: Register a new user
+      tags:
+      - auth
+  /history/{session_id}:
+    delete:
+      parameters:
+      - description: Session identifier
+        in: path
+        name: session_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Delete session history
+      tags:
+      - history
+    get:
+      parameters:
+      - description: Session identifier
+        in: path
+        name: session_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Fetch session history
+      tags:
+      - history
+  /providers/{provider}/sessions:
+    get:
+      parameters:
+      - description: Provider name
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Limit the number of sessions
+        in: query
+        name: limit
+        type: integer
+      - description: Include archived sessions
+        in: query
+        name: include_archived
+        type: boolean
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      security:
+      - BearerAuth: []
+      summary: List provider sessions
+      tags:
+      - provider_sessions
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Provider name
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Session payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ProviderSessionCreateRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Create provider session
+      tags:
+      - provider_sessions
+  /providers/{provider}/sessions/{session_id}:
+    delete:
+      parameters:
+      - description: Provider name
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Session identifier
+        in: path
+        name: session_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Archive provider session
+      tags:
+      - provider_sessions
+    get:
+      parameters:
+      - description: Provider name
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Session identifier
+        in: path
+        name: session_id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Get provider session
+      tags:
+      - provider_sessions
+  /session/{provider}/audio:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Provider name
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Audio payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SessionAudioRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Session audio transcription
+      tags:
+      - session
+  /session/{provider}/image:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Provider name
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Image payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SessionImageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Session image generation
+      tags:
+      - session
+  /session/{provider}/image/edit:
+    post:
+      consumes:
+      - application/json
+      - multipart/form-data
+      parameters:
+      - description: Provider name
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Image edit payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SessionImageEditRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Session image edit
+      tags:
+      - session
+  /session/{provider}/message:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Provider name
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Message payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SessionMessageRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Session chat message
+      tags:
+      - session
+  /session/{provider}/video:
+    post:
+      consumes:
+      - application/json
+      parameters:
+      - description: Provider name
+        in: path
+        name: provider
+        required: true
+        type: string
+      - description: Video payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.SessionVideoRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      security:
+      - BearerAuth: []
+      summary: Session video generation
+      tags:
+      - session
+  /v1/chat:
+    post:
+      consumes:
+      - application/json
+      description: Generates chat completions via the orchestrated providers with
+        optional persisted history context.
+      parameters:
+      - description: Routing strategy override (round_robin, random, failover, etc)
+        in: query
+        name: strategy
+        type: string
+      - description: Chat payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.TextReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      summary: Text completion
+      tags:
+      - chat
+  /v1/embeddings:
+    post:
+      consumes:
+      - application/json
+      description: Produces vector embeddings for one or more inputs.
+      parameters:
+      - description: Routing strategy override
+        in: query
+        name: strategy
+        type: string
+      - description: Embeddings payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.EmbeddingsReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      summary: Generate embeddings
+      tags:
+      - embeddings
+  /v1/image:
+    post:
+      consumes:
+      - application/json
+      description: Generates images with optional asset normalization before returning
+        URLs.
+      parameters:
+      - description: Routing strategy override
+        in: query
+        name: strategy
+        type: string
+      - description: Image generation payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ImageReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      summary: Image generation
+      tags:
+      - image
+  /v1/image/edit:
+    post:
+      consumes:
+      - application/json
+      - multipart/form-data
+      description: Applies edits or inpainting to existing images via multipart or
+        JSON payloads.
+      parameters:
+      - description: Routing strategy override
+        in: query
+        name: strategy
+        type: string
+      - description: Image edit payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ImageEditReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      summary: Image editing
+      tags:
+      - image
+  /v1/models:
+    get:
+      description: Returns model catalogs for every provider or a specific provider
+        when filtered.
+      parameters:
+      - description: Filter results to a single provider
+        in: query
+        name: provider
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      summary: List provider models
+      tags:
+      - providers
+  /v1/moderation:
+    post:
+      consumes:
+      - application/json
+      description: Evaluates input text for policy violations using provider moderation
+        APIs.
+      parameters:
+      - description: Routing strategy override
+        in: query
+        name: strategy
+        type: string
+      - description: Moderation payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.ModerationReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      summary: Moderate content
+      tags:
+      - moderation
+  /v1/providers:
+    get:
+      description: Returns the registered providers plus their capability matrix.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      summary: List providers
+      tags:
+      - providers
+  /v1/stt:
+    post:
+      consumes:
+      - application/json
+      description: Transcribes remote audio URLs via the selected provider.
+      parameters:
+      - description: Routing strategy override
+        in: query
+        name: strategy
+        type: string
+      - description: Speech-to-text payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.STTReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      summary: Speech to text
+      tags:
+      - speech
+  /v1/tts:
+    post:
+      consumes:
+      - application/json
+      description: Synthesizes speech audio for the provided text.
+      parameters:
+      - description: Routing strategy override
+        in: query
+        name: strategy
+        type: string
+      - description: Text-to-speech payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.TTSReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      summary: Text to speech
+      tags:
+      - speech
+  /v1/video:
+    post:
+      consumes:
+      - application/json
+      description: Generates short-form videos using provider-specific capabilities.
+      parameters:
+      - description: Routing strategy override
+        in: query
+        name: strategy
+        type: string
+      - description: Video generation payload
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/dto.VideoReq'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "429":
+          description: Too Many Requests
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ResponseEnvelope'
+      summary: Video generation
+      tags:
+      - video
+produces:
+- application/json
+schemes:
+- http
+- https
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

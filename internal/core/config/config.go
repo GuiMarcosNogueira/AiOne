@@ -22,14 +22,16 @@ type Config struct {
 	Jobs            JobsConfig
 	Auth            AuthConfig
 	Security        SecurityConfig
+	Logging         LoggingConfig
 }
 
 // OpenAIConfig captures the knobs for the OpenAI provider adapter.
 type OpenAIConfig struct {
 	APIKey             string
-	BaseURL            string
 	ChatModel          string
 	ImageModel         string
+	VideoModel         string
+	VideoSize          string
 	TranscriptionModel string
 	EmbeddingsModel    string
 	ModerationModel    string
@@ -39,7 +41,6 @@ type OpenAIConfig struct {
 // GeminiConfig captures the knobs for Google Gemini adapter.
 type GeminiConfig struct {
 	APIKey             string
-	BaseURL            string
 	TextModel          string
 	VisionModel        string
 	ImageModel         string
@@ -47,7 +48,6 @@ type GeminiConfig struct {
 	TranscriptionModel string
 	EmbeddingsModel    string
 	Timeout            time.Duration
-	MaxRetries         int
 	MaxUploadMB        int
 	AllowedMIMETypes   []string
 }
@@ -76,7 +76,9 @@ type DatabaseConfig struct {
 
 // StorageConfig customizes the upload storage backend.
 type StorageConfig struct {
-	UploadDir string
+	UploadDir     string
+	PublicBaseURL string
+	ServeFromAPI  bool
 }
 
 // JobsConfig exposes knobs for long-running job orchestration.
@@ -138,6 +140,12 @@ type ProviderSessionSecurityConfig struct {
 	Keys         map[string]string
 }
 
+// LoggingConfig toggles structured tracing for requests and provider calls.
+type LoggingConfig struct {
+	HTTPRequests  bool
+	ProviderCalls bool
+}
+
 // Load builds a Config from environment variables with sane defaults so the
 // service can boot even when optional variables are missing.
 func Load() Config {
@@ -147,9 +155,10 @@ func Load() Config {
 		ShutdownTimeout: getEnvAsDuration("SHUTDOWN_TIMEOUT", 5*time.Second),
 		OpenAI: OpenAIConfig{
 			APIKey:             getEnv("OPENAI_API_KEY", ""),
-			BaseURL:            getEnv("OPENAI_BASE_URL", "https://api.openai.com/v1"),
 			ChatModel:          getEnv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),
 			ImageModel:         getEnv("OPENAI_IMAGE_MODEL", "gpt-image-1"),
+			VideoModel:         getEnv("OPENAI_VIDEO_MODEL", "sora-2"),
+			VideoSize:          getEnv("OPENAI_VIDEO_SIZE", "720x1280"),
 			TranscriptionModel: getEnv("OPENAI_TRANSCRIPTION_MODEL", "gpt-4o-mini-transcribe"),
 			EmbeddingsModel:    getEnv("OPENAI_EMBEDDINGS_MODEL", "text-embedding-3-large"),
 			ModerationModel:    getEnv("OPENAI_MODERATION_MODEL", "omni-moderation-latest"),
@@ -157,15 +166,13 @@ func Load() Config {
 		},
 		Gemini: GeminiConfig{
 			APIKey:             getEnv("GEMINI_API_KEY", ""),
-			BaseURL:            getEnv("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
 			TextModel:          getEnv("GEMINI_TEXT_MODEL", "gemini-2.5-flash"),
 			VisionModel:        getEnv("GEMINI_VISION_MODEL", "gemini-2.5-pro"),
-			ImageModel:         getEnv("GEMINI_IMAGE_MODEL", "imagen-3.0-generate"),
+			ImageModel:         getEnv("GEMINI_IMAGE_MODEL", "gemini-2.5-flash-image"),
 			VideoModel:         getEnv("GEMINI_VIDEO_MODEL", "gemini-2.5-flash"),
 			TranscriptionModel: getEnv("GEMINI_TRANSCRIPTION_MODEL", "gemini-2.5-flash"),
 			EmbeddingsModel:    getEnv("GEMINI_EMBEDDINGS_MODEL", "text-embedding-004"),
 			Timeout:            getEnvAsDuration("GEMINI_TIMEOUT", 30*time.Second),
-			MaxRetries:         getEnvAsInt("GEMINI_MAX_RETRIES", 2),
 			MaxUploadMB:        getEnvAsInt("GEMINI_MAX_UPLOAD_MB", 50),
 			AllowedMIMETypes:   getEnvAsCSV("GEMINI_ALLOWED_MIME", []string{"image/png", "image/jpeg", "video/mp4", "audio/wav", "audio/mpeg"}),
 		},
@@ -188,7 +195,9 @@ func Load() Config {
 			URL: getEnv("DATABASE_URL", ""),
 		},
 		Storage: StorageConfig{
-			UploadDir: getEnv("UPLOAD_DIR", "storage"),
+			UploadDir:     getEnv("UPLOAD_DIR", "storage"),
+			PublicBaseURL: getEnv("STORAGE_PUBLIC_BASE_URL", ""),
+			ServeFromAPI:  getEnvAsBool("STORAGE_SERVE_FROM_API", true),
 		},
 		Jobs: JobsConfig{
 			WorkerInterval:      getEnvAsDuration("JOBS_WORKER_INTERVAL", 5*time.Second),
@@ -230,6 +239,10 @@ func Load() Config {
 				Keys:         getEnvAsKeyRing("PROVIDER_SESSION_KEYS"),
 			},
 		},
+		Logging: LoggingConfig{
+			HTTPRequests:  getEnvAsBool("LOG_HTTP_REQUESTS", false),
+			ProviderCalls: getEnvAsBool("LOG_PROVIDER_CALLS", false),
+		},
 	}
 }
 
@@ -257,6 +270,18 @@ func getEnvAsInt(key string, fallback int) int {
 		value, err := strconv.Atoi(raw)
 		if err != nil {
 			log.Printf("invalid %s value %q, using default %d", key, raw, fallback)
+			return fallback
+		}
+		return value
+	}
+	return fallback
+}
+
+func getEnvAsBool(key string, fallback bool) bool {
+	if raw, ok := os.LookupEnv(key); ok && raw != "" {
+		value, err := strconv.ParseBool(raw)
+		if err != nil {
+			log.Printf("invalid %s value %q, using default %t", key, raw, fallback)
 			return fallback
 		}
 		return value

@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -13,15 +12,14 @@ import (
 
 	"github.com/midia/aione/internal/services/auth"
 	"github.com/midia/aione/internal/services/providersessions"
-	"github.com/midia/aione/pkg/encryption"
 )
 
-func TestProviderSessionSetKeyHandler(t *testing.T) {
-	api, _, tokens := newProviderSessionTestAPI(t)
-	body := strings.NewReader(`{"provider_key":"sk-123","metadata":{"label":"team"}}`)
-	rec := executeAuthedRequest(t, tokens, api.Handler(), http.MethodPost, "/providers/openai/set-key", body)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d", rec.Code)
+func TestProviderSessionCreateHandler(t *testing.T) {
+	api, repo, tokens := newProviderSessionTestAPI(t)
+	body := strings.NewReader(`{"title":"Demo chat","metadata":{"label":"team"}}`)
+	rec := executeAuthedRequest(t, tokens, api.Handler(), http.MethodPost, "/providers/openai/sessions", body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d", rec.Code)
 	}
 	var resp struct {
 		Data providersessions.SessionDetails `json:"data"`
@@ -29,50 +27,55 @@ func TestProviderSessionSetKeyHandler(t *testing.T) {
 	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if resp.Data.ProviderName != "openai" || resp.Data.ProviderKey != "sk-123" {
+	if resp.Data.Title != "Demo chat" {
 		t.Fatalf("unexpected payload: %+v", resp.Data)
+	}
+	if len(repo.sessions) != 1 {
+		t.Fatalf("expected session stored")
 	}
 }
 
-func TestProviderSessionGetSessionNotFound(t *testing.T) {
+func TestProviderSessionListHandler(t *testing.T) {
+	api, repo, tokens := newProviderSessionTestAPI(t)
+	repo.seed("user-1", providersessions.Session{ID: "s1", UserID: "user-1", ProviderName: "openai", Title: "Chat", LastInteraction: time.Now(), CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	rec := executeAuthedRequest(t, tokens, api.Handler(), http.MethodGet, "/providers/openai/sessions", nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var resp struct {
+		Data []providersessions.SessionDetails `json:"data"`
+	}
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Data) != 1 {
+		t.Fatalf("expected single session, got %d", len(resp.Data))
+	}
+}
+
+func TestProviderSessionGetNotFound(t *testing.T) {
 	api, _, tokens := newProviderSessionTestAPI(t)
-	rec := executeAuthedRequest(t, tokens, api.Handler(), http.MethodGet, "/providers/openai/session", nil)
+	rec := executeAuthedRequest(t, tokens, api.Handler(), http.MethodGet, "/providers/openai/sessions/missing", nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }
 
-func TestProviderSessionResetSession(t *testing.T) {
+func TestProviderSessionArchive(t *testing.T) {
 	api, repo, tokens := newProviderSessionTestAPI(t)
-	_, err := api.service.SetProviderKey(
-		context.Background(),
-		providersessions.SetKeyInput{UserID: "user-1", ProviderName: "openai", ProviderKey: "sk-erase"},
-	)
-	if err != nil {
-		t.Fatalf("seed session: %v", err)
-	}
-	rec := executeAuthedRequest(t, tokens, api.Handler(), http.MethodDelete, "/providers/openai/session/reset", nil)
+	repo.seed("user-1", providersessions.Session{ID: "s1", UserID: "user-1", ProviderName: "openai", Title: "Chat", LastInteraction: time.Now(), CreatedAt: time.Now(), UpdatedAt: time.Now()})
+	rec := executeAuthedRequest(t, tokens, api.Handler(), http.MethodDelete, "/providers/openai/sessions/s1", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
-	if repo.hasSession("user-1", "openai") {
-		t.Fatalf("expected session to be removed")
-	}
-}
-
-func TestProviderSessionValidationError(t *testing.T) {
-	api, _, tokens := newProviderSessionTestAPI(t)
-	body := strings.NewReader(`{"metadata":{}}`)
-	rec := executeAuthedRequest(t, tokens, api.Handler(), http.MethodPost, "/providers/openai/set-key", body)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400, got %d", rec.Code)
+	if repo.sessions["s1"].ArchivedAt == nil {
+		t.Fatalf("expected session archived")
 	}
 }
 
 func TestProviderSessionRequiresAuth(t *testing.T) {
 	api, _, _ := newProviderSessionTestAPI(t)
-	req := httptest.NewRequest(http.MethodPost, "/providers/openai/set-key", strings.NewReader(`{"provider_key":"sk"}`))
-	req.Header.Set("Content-Type", "application/json")
+	req := httptest.NewRequest(http.MethodGet, "/providers/openai/sessions", nil)
 	rec := httptest.NewRecorder()
 	api.Handler().ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -81,11 +84,11 @@ func TestProviderSessionRequiresAuth(t *testing.T) {
 }
 
 func TestExtractProviderPath(t *testing.T) {
-	provider, tail := extractProviderPath("openai/session/reset")
+	provider, tail := extractProviderPath("openai/sessions/s1")
 	if provider != "openai" {
 		t.Fatalf("expected provider openai, got %s", provider)
 	}
-	if tail != "session/reset" {
+	if tail != "sessions/s1" {
 		t.Fatalf("unexpected tail %s", tail)
 	}
 	provider, tail = extractProviderPath("/")
@@ -97,12 +100,7 @@ func TestExtractProviderPath(t *testing.T) {
 func newProviderSessionTestAPI(t *testing.T) (*ProviderSessionAPI, *handlerMemoryRepo, *auth.TokenManager) {
 	t.Helper()
 	repo := newHandlerMemoryRepo()
-	key := base64.StdEncoding.EncodeToString(make([]byte, 32))
-	enc, err := encryption.NewManager("primary", map[string]string{"primary": key})
-	if err != nil {
-		t.Fatalf("encryption manager: %v", err)
-	}
-	service, err := providersessions.NewService(repo, enc)
+	service, err := providersessions.NewService(repo)
 	if err != nil {
 		t.Fatalf("new service: %v", err)
 	}
@@ -138,59 +136,81 @@ func newHandlerMemoryRepo() *handlerMemoryRepo {
 	return &handlerMemoryRepo{sessions: map[string]providersessions.Session{}}
 }
 
-func (r *handlerMemoryRepo) Upsert(ctx context.Context, params providersessions.UpsertParams) (providersessions.Session, error) {
-	key := params.UserID + "|" + params.ProviderName
+func (r *handlerMemoryRepo) seed(userID string, session providersessions.Session) {
+	session.UserID = userID
+	r.sessions[session.ID] = session
+}
+
+func (r *handlerMemoryRepo) Create(ctx context.Context, params providersessions.CreateParams) (providersessions.Session, error) {
 	now := time.Now().UTC()
 	sess := providersessions.Session{
+		ID:              params.ID,
 		UserID:          params.UserID,
 		ProviderName:    params.ProviderName,
-		EncryptedKey:    append([]byte(nil), params.EncryptedKey...),
-		EncryptionKeyID: params.EncryptionKeyID,
-		LastInteraction: params.LastInteraction,
+		Title:           params.Title,
 		Metadata:        params.Metadata,
 		ExpiresAt:       params.ExpiresAt,
+		LastInteraction: now,
 		CreatedAt:       now,
 		UpdatedAt:       now,
 	}
-	r.sessions[key] = sess
+	r.sessions[sess.ID] = sess
 	return sess, nil
 }
 
-func (r *handlerMemoryRepo) Get(ctx context.Context, userID, provider string) (providersessions.Session, error) {
-	key := userID + "|" + provider
-	sess, ok := r.sessions[key]
-	if !ok {
+func (r *handlerMemoryRepo) Get(ctx context.Context, userID, sessionID string) (providersessions.Session, error) {
+	sess, ok := r.sessions[sessionID]
+	if !ok || sess.UserID != userID {
 		return providersessions.Session{}, providersessions.ErrSessionNotFound
 	}
 	return sess, nil
+}
+
+func (r *handlerMemoryRepo) List(ctx context.Context, params providersessions.ListParams) ([]providersessions.Session, error) {
+	var sessions []providersessions.Session
+	for _, sess := range r.sessions {
+		if sess.UserID != params.UserID {
+			continue
+		}
+		if params.ProviderName != "" && sess.ProviderName != params.ProviderName {
+			continue
+		}
+		if !params.IncludeArchived && sess.ArchivedAt != nil {
+			continue
+		}
+		sessions = append(sessions, sess)
+	}
+	return sessions, nil
 }
 
 func (r *handlerMemoryRepo) UpdateUsage(ctx context.Context, params providersessions.UsageUpdateParams) (providersessions.Session, error) {
-	key := params.UserID + "|" + params.ProviderName
-	sess, ok := r.sessions[key]
-	if !ok {
+	sess, ok := r.sessions[params.SessionID]
+	if !ok || sess.UserID != params.UserID {
 		return providersessions.Session{}, providersessions.ErrSessionNotFound
 	}
 	sess.TotalTokensUsed += params.TokensDelta
+	if !params.LastInteraction.IsZero() {
+		sess.LastInteraction = params.LastInteraction
+	}
 	if params.Metadata != nil {
 		sess.Metadata = params.Metadata
 	}
-	sess.LastInteraction = params.LastInteraction
+	if params.ExpiresAt != nil {
+		sess.ExpiresAt = params.ExpiresAt
+	}
 	sess.UpdatedAt = time.Now().UTC()
-	r.sessions[key] = sess
+	r.sessions[sess.ID] = sess
 	return sess, nil
 }
 
-func (r *handlerMemoryRepo) Delete(ctx context.Context, userID, provider string) error {
-	key := userID + "|" + provider
-	if _, ok := r.sessions[key]; !ok {
+func (r *handlerMemoryRepo) Archive(ctx context.Context, userID, sessionID string) error {
+	sess, ok := r.sessions[sessionID]
+	if !ok || sess.UserID != userID {
 		return providersessions.ErrSessionNotFound
 	}
-	delete(r.sessions, key)
+	now := time.Now().UTC()
+	sess.ArchivedAt = &now
+	sess.UpdatedAt = now
+	r.sessions[sessionID] = sess
 	return nil
-}
-
-func (r *handlerMemoryRepo) hasSession(userID, provider string) bool {
-	_, ok := r.sessions[userID+"|"+provider]
-	return ok
 }

@@ -243,6 +243,36 @@ func TestCapabilityMatrixIncludesProviders(t *testing.T) {
 	}
 }
 
+func TestModelCatalogReturnsEntries(t *testing.T) {
+	base := newStubProvider("catalog", capability(5, 5, 5, 0), successText("ok"))
+	provider := &catalogStub{stubProvider: base, models: []providers.ModelDescriptor{{Provider: "catalog", Capability: providers.CapabilityText, Name: "model-a"}}}
+	mgr := NewManager([]providers.Provider{provider})
+	models, err := mgr.ModelCatalog(context.Background(), "catalog")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(models) != 1 || models[0].Name != "model-a" {
+		t.Fatalf("unexpected models: %+v", models)
+	}
+}
+
+func TestModelCatalogUnavailable(t *testing.T) {
+	mgr := NewManager([]providers.Provider{newStubProvider("plain", capability(5, 5, 5, 0), successText("ok"))})
+	if _, err := mgr.ModelCatalog(context.Background(), "plain"); !errors.Is(err, ErrModelCatalogUnavailable) {
+		t.Fatalf("expected catalog unavailable error, got %v", err)
+	}
+}
+
+func TestAllModelCatalogsAggregatesAvailable(t *testing.T) {
+	base := newStubProvider("catalog", capability(5, 5, 5, 0), successText("ok"))
+	provider := &catalogStub{stubProvider: base, models: []providers.ModelDescriptor{{Provider: "catalog", Capability: providers.CapabilityText, Name: "model-a"}}}
+	mgr := NewManager([]providers.Provider{provider})
+	all := mgr.AllModelCatalogs(context.Background())
+	if len(all) != 1 || len(all["catalog"]) != 1 {
+		t.Fatalf("expected catalog entry, got %+v", all)
+	}
+}
+
 type stubProvider struct {
 	name       string
 	caps       providers.Capabilities
@@ -296,6 +326,15 @@ func newFullProvider(name string) *stubProvider {
 	}
 }
 
+type catalogStub struct {
+	*stubProvider
+	models []providers.ModelDescriptor
+}
+
+func (c *catalogStub) ListModels(ctx context.Context) ([]providers.ModelDescriptor, error) {
+	return c.models, nil
+}
+
 func successText(content string) func(context.Context, dto.TextReq) (dto.TextResp, error) {
 	return func(ctx context.Context, req dto.TextReq) (dto.TextResp, error) {
 		return dto.TextResp{Content: content}, nil
@@ -332,6 +371,10 @@ func (s *stubProvider) ImageGenerate(ctx context.Context, req dto.ImageReq) (dto
 		return s.imageFn(ctx, req)
 	}
 	return dto.ImageResp{}, errors.New("not implemented")
+}
+
+func (s *stubProvider) ImageEdit(ctx context.Context, req dto.ImageEditReq) (dto.ImageResp, error) {
+	return s.ImageGenerate(ctx, dto.ImageReq{Prompt: req.Prompt})
 }
 
 func (s *stubProvider) VideoGenerate(ctx context.Context, req dto.VideoReq) (dto.VideoResp, error) {

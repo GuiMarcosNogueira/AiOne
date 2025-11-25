@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -22,8 +21,8 @@ import (
 func TestRouterHealthz(t *testing.T) {
 	log := testLogger()
 	healthSvc := &stubHealth{statuses: []health.Status{{Name: "mock", Healthy: true}}}
-	api := handlers.New(log, providermanager.NewManager([]providers.Provider{mockproviders.New("mock")}), nil)
-	r := New(log, healthSvc, api, nil, nil, nil, nil, nil)
+	api := handlers.New(log, providermanager.NewManager([]providers.Provider{mockproviders.New("mock")}), nil, nil)
+	r := New(log, healthSvc, api, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 	rec := httptest.NewRecorder()
@@ -45,35 +44,38 @@ func TestRouterHealthz(t *testing.T) {
 }
 
 func TestRouterDocs(t *testing.T) {
-	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil), nil), nil, nil, nil, nil, nil)
-	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
+	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil), nil, nil), nil, nil, nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/docs/", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
+	if rec.Code >= 300 && rec.Code < 400 {
+		loc := rec.Header().Get("Location")
+		if loc == "" {
+			t.Fatalf("docs redirect missing location header")
+		}
+		req = httptest.NewRequest(http.MethodGet, loc, nil)
+		rec = httptest.NewRecorder()
+		r.ServeHTTP(rec, req)
+	}
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), "SwaggerUIBundle") {
+	if !strings.Contains(rec.Body.String(), "Swagger") {
 		t.Fatalf("expected swagger html, got %s", rec.Body.String())
 	}
 }
 
-func TestRouterOpenAPI(t *testing.T) {
-	oldPath := openAPIPath
-	t.Cleanup(func() { openAPIPath = oldPath })
-	openAPIPath = filepath.Join("..", "..", "..", "openapi.yaml")
-	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil), nil), nil, nil, nil, nil, nil)
-	req := httptest.NewRequest(http.MethodGet, "/openapi.yaml", nil)
+func TestRouterDocsRedirect(t *testing.T) {
+	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil), nil, nil), nil, nil, nil, nil, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/docs", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected openapi file, got %d", rec.Code)
+	if rec.Code != http.StatusPermanentRedirect {
+		t.Fatalf("expected redirect, got %d", rec.Code)
 	}
-}
-
-func TestSwaggerHTML(t *testing.T) {
-	html := swaggerHTML("/spec.yaml")
-	if !strings.Contains(html, "/spec.yaml") {
-		t.Fatalf("expected html to reference spec url")
+	loc := rec.Header().Get("Location")
+	if loc != "/docs/" {
+		t.Fatalf("expected redirect to /docs/, got %s", loc)
 	}
 }
 
@@ -96,8 +98,8 @@ func TestProviderSessionRoutesRequireAuth(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 		})
 	}
-	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil), nil), nil, sessionHandler, nil, nil, authMiddleware)
-	req := httptest.NewRequest(http.MethodGet, "/providers/openai/session", nil)
+	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil), nil, nil), nil, sessionHandler, nil, nil, nil, authMiddleware)
+	req := httptest.NewRequest(http.MethodGet, "/providers/openai/sessions", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -119,8 +121,8 @@ func TestHistoryRoutesRequireAuth(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 		})
 	}
-	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil), nil), nil, nil, historyHandler, nil, authMiddleware)
-	req := httptest.NewRequest(http.MethodGet, "/history/openai", nil)
+	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil), nil, nil), nil, nil, historyHandler, nil, nil, authMiddleware)
+	req := httptest.NewRequest(http.MethodGet, "/history/session-1", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
@@ -142,7 +144,7 @@ func TestSessionRoutesRequireAuth(t *testing.T) {
 			w.WriteHeader(http.StatusUnauthorized)
 		})
 	}
-	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil), nil), nil, nil, nil, convHandler, authMiddleware)
+	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil), nil, nil), nil, nil, nil, convHandler, nil, authMiddleware)
 	req := httptest.NewRequest(http.MethodPost, "/session/openai/message", nil)
 	rec := httptest.NewRecorder()
 	r.ServeHTTP(rec, req)
@@ -151,6 +153,24 @@ func TestSessionRoutesRequireAuth(t *testing.T) {
 	}
 	if called {
 		t.Fatalf("conversation handler should not run without auth")
+	}
+}
+
+func TestMediaHandler(t *testing.T) {
+	called := false
+	media := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusOK)
+	})
+	r := New(testLogger(), &stubHealth{}, handlers.New(testLogger(), providermanager.NewManager(nil), nil, nil), nil, nil, nil, nil, media, nil)
+	req := httptest.NewRequest(http.MethodGet, "/media/sample.png", nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if !called {
+		t.Fatal("media handler not invoked")
 	}
 }
 

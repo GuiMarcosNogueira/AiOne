@@ -1,0 +1,20 @@
+basePath: /
+consumes:
+- application/json
+info:
+  contact: {}
+  description: Unified AI gateway that proxies multiple providers.
+  title: AiOne API
+  version: "1.0"
+paths: {}
+produces:
+- application/json
+schemes:
+- http
+- https
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

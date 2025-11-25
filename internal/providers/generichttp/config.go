@@ -28,6 +28,7 @@ type FileConfig struct {
 type CapabilityConfig struct {
 	TextGeneration  *bool                          `json:"text_generation" yaml:"text_generation"`
 	ImageGeneration *bool                          `json:"image_generation" yaml:"image_generation"`
+	ImageEditing    *bool                          `json:"image_editing" yaml:"image_editing"`
 	VideoGeneration *bool                          `json:"video_generation" yaml:"video_generation"`
 	SpeechToText    *bool                          `json:"speech_to_text" yaml:"speech_to_text"`
 	TextToSpeech    *bool                          `json:"text_to_speech" yaml:"text_to_speech"`
@@ -41,6 +42,7 @@ type CapabilityConfig struct {
 type EndpointSet struct {
 	Text       *EndpointConfig `json:"text" yaml:"text"`
 	Image      *EndpointConfig `json:"image" yaml:"image"`
+	ImageEdit  *EndpointConfig `json:"image_edit" yaml:"image_edit"`
 	Video      *EndpointConfig `json:"video" yaml:"video"`
 	STT        *EndpointConfig `json:"stt" yaml:"stt"`
 	TTS        *EndpointConfig `json:"tts" yaml:"tts"`
@@ -166,6 +168,9 @@ func (cfg FileConfig) deriveCapabilities() providers.Capabilities {
 	if cfg.Endpoints.Image != nil && cfg.Endpoints.Image.enabled() {
 		caps.ImageGeneration = true
 	}
+	if cfg.Endpoints.ImageEdit != nil && cfg.Endpoints.ImageEdit.enabled() {
+		caps.ImageEditing = true
+	}
 	if cfg.Endpoints.Video != nil && cfg.Endpoints.Video.enabled() {
 		caps.VideoGeneration = true
 	}
@@ -189,6 +194,7 @@ func (cfg FileConfig) deriveCapabilities() providers.Capabilities {
 	}
 	caps.TextGeneration = overrideBool(cfg.Capabilities.TextGeneration, caps.TextGeneration)
 	caps.ImageGeneration = overrideBool(cfg.Capabilities.ImageGeneration, caps.ImageGeneration)
+	caps.ImageEditing = overrideBool(cfg.Capabilities.ImageEditing, caps.ImageEditing)
 	caps.VideoGeneration = overrideBool(cfg.Capabilities.VideoGeneration, caps.VideoGeneration)
 	caps.SpeechToText = overrideBool(cfg.Capabilities.SpeechToText, caps.SpeechToText)
 	caps.TextToSpeech = overrideBool(cfg.Capabilities.TextToSpeech, caps.TextToSpeech)
