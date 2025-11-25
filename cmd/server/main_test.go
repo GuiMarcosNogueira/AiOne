@@ -17,6 +17,7 @@ func TestMainStartsAndStops(t *testing.T) {
 		return ctx, cancel
 	}
 	t.Setenv("HTTP_PORT", "0")
+	t.Setenv("GRPC_ENABLED", "false")
 	t.Setenv("OPENAI_API_KEY", "")
 	t.Setenv("SHUTDOWN_TIMEOUT", "1")
 	t.Setenv("PROVIDER_CB_COOLDOWN", "1")

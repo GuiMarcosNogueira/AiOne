@@ -1,0 +1,406 @@
+syntax = "proto3";
+
+package aione.v1;
+
+option go_package = "github.com/midia/aione/api/grpc/aione;apiv1";
+
+message MediaInput {
+  string type = 1;
+  string url = 2;
+  bytes data = 3;
+  string mime_type = 4;
+}
+
+message ProviderOverride {
+  string provider = 1;
+  string strategy = 2;
+}
+
+message ChatRequest {
+  string prompt = 1;
+  int32 max_tokens = 2;
+  float temperature = 3;
+  repeated MediaInput media = 4;
+  ProviderOverride routing = 5;
+}
+
+message ChatResponse {
+  string provider = 1;
+  string content = 2;
+}
+
+message ImageRequest {
+  string prompt = 1;
+  string size = 2;
+  repeated MediaInput media = 3;
+  ProviderOverride routing = 4;
+}
+
+message ImageResponse {
+  string provider = 1;
+  ImageAsset image = 2;
+}
+
+message ImageAsset {
+  string url = 1;
+}
+
+message ImageEditRequest {
+  string prompt = 1;
+  string image_url = 2;
+  bytes image_data = 3;
+  string mask_url = 4;
+  bytes mask_data = 5;
+  string size = 6;
+  repeated MediaInput media = 7;
+  ProviderOverride routing = 8;
+}
+
+message VideoRequest {
+  string prompt = 1;
+  int32 duration_seconds = 2;
+  repeated MediaInput media = 3;
+  ProviderOverride routing = 4;
+}
+
+message VideoResponse {
+  string provider = 1;
+  VideoAsset video = 2;
+}
+
+message VideoAsset {
+  string url = 1;
+}
+
+message SpeechToTextRequest {
+  string audio_url = 1;
+  bytes audio_data = 2;
+  string language = 3;
+  ProviderOverride routing = 4;
+}
+
+message SpeechToTextResponse {
+  string provider = 1;
+  string transcript = 2;
+}
+
+message TextToSpeechRequest {
+  string text = 1;
+  string voice = 2;
+  string language = 3;
+  ProviderOverride routing = 4;
+}
+
+message TextToSpeechResponse {
+  string provider = 1;
+  string audio_url = 2;
+}
+
+message EmbeddingsRequest {
+  repeated string inputs = 1;
+  string model = 2;
+  ProviderOverride routing = 3;
+}
+
+message EmbeddingsResponse {
+  string provider = 1;
+  repeated EmbeddingVector vectors = 2;
+}
+
+message EmbeddingVector {
+  repeated float values = 1;
+}
+
+message ModerationRequest {
+  string input = 1;
+  ProviderOverride routing = 2;
+}
+
+message ModerationResponse {
+  string provider = 1;
+  bool flagged = 2;
+  string reason = 3;
+}
+
+message ListProvidersRequest {}
+
+message ListProvidersResponse {
+  repeated CapabilityMatrixEntry entries = 1;
+}
+
+message CapabilityMatrixEntry {
+  string name = 1;
+  ProviderCapabilities capabilities = 2;
+}
+
+message ProviderCapabilities {
+  bool text_generation = 1;
+  bool image_generation = 2;
+  bool image_editing = 3;
+  bool video_generation = 4;
+  bool speech_to_text = 5;
+  bool text_to_speech = 6;
+  bool embeddings = 7;
+  bool moderation = 8;
+  CapabilityLimits limits = 9;
+  CapabilityAttributes attributes = 10;
+}
+
+message CapabilityLimits {
+  int32 max_text_tokens = 1;
+  string max_image_resolution = 2;
+  int32 max_embedding_dimensions = 3;
+}
+
+message CapabilityAttributes {
+  int32 cost_score = 1;
+  int32 latency_score = 2;
+  int32 quality_score = 3;
+  double rate_limit_rps = 4;
+}
+
+message ListModelsRequest {
+  string provider = 1;
+}
+
+message ListModelsResponse {
+  map<string, ModelCatalog> catalogs = 1;
+}
+
+message ModelCatalog {
+  repeated ModelDescriptor models = 1;
+}
+
+message ModelDescriptor {
+  string provider = 1;
+  string name = 2;
+  string capability = 3;
+  string description = 4;
+  bool default = 5;
+  repeated string tags = 6;
+  map<string, string> metadata = 7;
+}
+
+message RegisterRequest {
+  string email = 1;
+  string display_name = 2;
+  string password = 3;
+  map<string, string> preferences = 4;
+  string timezone = 5;
+  string locale = 6;
+  string ip = 7;
+  string user_agent = 8;
+}
+
+message AuthResponse {
+  string access_token = 1;
+  int64 access_expires_in = 2;
+  string refresh_token = 3;
+  int64 refresh_expires_in = 4;
+}
+
+message LoginRequest {
+  string email = 1;
+  string password = 2;
+  string ip = 3;
+  string user_agent = 4;
+}
+
+message RefreshRequest {
+  string refresh_token = 1;
+  string ip = 2;
+  string user_agent = 3;
+}
+
+message LogoutRequest {
+  string refresh_token = 1;
+}
+
+message LogoutResponse {
+  bool success = 1;
+}
+
+message SessionMetadata {
+  map<string, string> fields = 1;
+}
+
+message ProviderSessionCreateRequest {
+  string provider = 1;
+  string title = 2;
+  SessionMetadata metadata = 3;
+  int64 expires_at_unix = 4;
+}
+
+message ProviderSessionListRequest {
+  string provider = 1;
+  int32 limit = 2;
+  bool include_archived = 3;
+}
+
+message ProviderSessionGetRequest {
+  string provider = 1;
+  string session_id = 2;
+}
+
+message ProviderSessionArchiveRequest {
+  string session_id = 1;
+}
+
+message ProviderSessionResponse {
+  ProviderSession session = 1;
+}
+
+message ProviderSessionListResponse {
+  repeated ProviderSession sessions = 1;
+}
+
+message ArchiveSessionResponse {
+  bool archived = 1;
+}
+
+message ProviderSession {
+  string id = 1;
+  string provider_name = 2;
+  string title = 3;
+  int64 last_interaction_unix = 4;
+  int64 total_tokens_used = 5;
+  int64 expires_at_unix = 6;
+  SessionMetadata metadata = 7;
+  int64 archived_at_unix = 8;
+}
+
+message SessionContext {
+  string provider = 1;
+  string provider_key = 2;
+  string session_id = 3;
+  string session_title = 4;
+  SessionMetadata metadata = 5;
+  int64 expires_at_unix = 6;
+}
+
+message SessionMessageRequest {
+  string prompt = 1;
+  int32 max_tokens = 2;
+  float temperature = 3;
+  repeated MediaInput media = 4;
+  SessionContext session = 5;
+}
+
+message SessionImageRequest {
+  string prompt = 1;
+  string size = 2;
+  repeated MediaInput media = 3;
+  SessionContext session = 4;
+}
+
+message SessionImageEditRequest {
+  string prompt = 1;
+  string image_url = 2;
+  bytes image_data = 3;
+  string mask_url = 4;
+  bytes mask_data = 5;
+  string size = 6;
+  repeated MediaInput media = 7;
+  SessionContext session = 8;
+}
+
+message SessionVideoRequest {
+  string prompt = 1;
+  int32 duration_seconds = 2;
+  repeated MediaInput media = 3;
+  SessionContext session = 4;
+}
+
+message SessionAudioRequest {
+  string audio_url = 1;
+  bytes audio_data = 2;
+  string language = 3;
+  SessionContext session = 4;
+}
+
+message SessionResponse {
+  string provider = 1;
+  SessionDetails session = 2;
+  oneof payload {
+    string text = 3;
+    ImageAsset image = 4;
+    VideoAsset video = 5;
+    string transcript = 6;
+  }
+}
+
+message SessionDetails {
+  string id = 1;
+  string provider_name = 2;
+  string title = 3;
+  int64 last_interaction_unix = 4;
+  int64 total_tokens_used = 5;
+  int64 expires_at_unix = 6;
+  SessionMetadata metadata = 7;
+  int64 archived_at_unix = 8;
+}
+
+message HistoryRequest {
+  string session_id = 1;
+}
+
+message HistoryEntry {
+  int64 id = 1;
+  string user_id = 2;
+  string session_id = 3;
+  string provider_name = 4;
+  string role = 5;
+  string message = 6;
+  string media_type = 7;
+  string media_path = 8;
+  int32 tokens_estimated = 9;
+  int64 created_at_unix = 10;
+}
+
+message HistoryResponse {
+  repeated HistoryEntry entries = 1;
+}
+
+message DeleteHistoryResponse {
+  bool deleted = 1;
+}
+
+service PublicService {
+  rpc Chat(ChatRequest) returns (ChatResponse);
+  rpc GenerateImage(ImageRequest) returns (ImageResponse);
+  rpc EditImage(ImageEditRequest) returns (ImageResponse);
+  rpc GenerateVideo(VideoRequest) returns (VideoResponse);
+  rpc SpeechToText(SpeechToTextRequest) returns (SpeechToTextResponse);
+  rpc TextToSpeech(TextToSpeechRequest) returns (TextToSpeechResponse);
+  rpc Embeddings(EmbeddingsRequest) returns (EmbeddingsResponse);
+  rpc Moderation(ModerationRequest) returns (ModerationResponse);
+  rpc ListProviders(ListProvidersRequest) returns (ListProvidersResponse);
+  rpc ListModels(ListModelsRequest) returns (ListModelsResponse);
+}
+
+service AuthService {
+  rpc Register(RegisterRequest) returns (AuthResponse);
+  rpc Login(LoginRequest) returns (AuthResponse);
+  rpc Refresh(RefreshRequest) returns (AuthResponse);
+  rpc Logout(LogoutRequest) returns (LogoutResponse);
+}
+
+service ProviderSessionService {
+  rpc CreateSession(ProviderSessionCreateRequest) returns (ProviderSessionResponse);
+  rpc ListSessions(ProviderSessionListRequest) returns (ProviderSessionListResponse);
+  rpc GetSession(ProviderSessionGetRequest) returns (ProviderSessionResponse);
+  rpc ArchiveSession(ProviderSessionArchiveRequest) returns (ArchiveSessionResponse);
+}
+
+service ConversationService {
+  rpc SendMessage(SessionMessageRequest) returns (SessionResponse);
+  rpc GenerateImage(SessionImageRequest) returns (SessionResponse);
+  rpc EditImage(SessionImageEditRequest) returns (SessionResponse);
+  rpc GenerateVideo(SessionVideoRequest) returns (SessionResponse);
+  rpc TranscribeAudio(SessionAudioRequest) returns (SessionResponse);
+}
+
+service HistoryService {
+  rpc GetHistory(HistoryRequest) returns (HistoryResponse);
+  rpc DeleteHistory(HistoryRequest) returns (DeleteHistoryResponse);
+}

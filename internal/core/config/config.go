@@ -13,6 +13,7 @@ type Config struct {
 	HTTPPort        string
 	LogLevel        string
 	ShutdownTimeout time.Duration
+	GRPC            GRPCConfig
 	OpenAI          OpenAIConfig
 	Gemini          GeminiConfig
 	GenericHTTP     GenericHTTPConfig
@@ -94,6 +95,15 @@ type GenericHTTPConfig struct {
 	ConfigDir string
 }
 
+// GRPCConfig toggles the gRPC server and its limits.
+type GRPCConfig struct {
+	Enabled    bool
+	Port       string
+	Reflection bool
+	MaxRecvMB  int
+	MaxSendMB  int
+}
+
 // AuthConfig captures authentication and session settings.
 type AuthConfig struct {
 	AccessSecret  string
@@ -150,9 +160,16 @@ type LoggingConfig struct {
 // service can boot even when optional variables are missing.
 func Load() Config {
 	return Config{
-		HTTPPort:        getEnv("HTTP_PORT", "8080"),
+		HTTPPort:        getEnv("HTTP_PORT", "8089"),
 		LogLevel:        getEnv("LOG_LEVEL", "info"),
 		ShutdownTimeout: getEnvAsDuration("SHUTDOWN_TIMEOUT", 5*time.Second),
+		GRPC: GRPCConfig{
+			Enabled:    getEnvAsBool("GRPC_ENABLED", true),
+			Port:       getEnv("GRPC_PORT", "9090"),
+			Reflection: getEnvAsBool("GRPC_REFLECTION", true),
+			MaxRecvMB:  getEnvAsInt("GRPC_MAX_RECV_MB", 16),
+			MaxSendMB:  getEnvAsInt("GRPC_MAX_SEND_MB", 16),
+		},
 		OpenAI: OpenAIConfig{
 			APIKey:             getEnv("OPENAI_API_KEY", ""),
 			ChatModel:          getEnv("OPENAI_CHAT_MODEL", "gpt-4o-mini"),

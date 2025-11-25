@@ -19,7 +19,7 @@ Backend skeleton in Go following Clean Architecture conventions to fan-out reque
 1. Copy `.env.example` to `.env` and fill in the required variables, for example:
 	```dotenv
 	OPENAI_API_KEY=sk-live...
-	HTTP_PORT=8080
+	HTTP_PORT=8089
 	GEMINI_API_KEY=your-google-ai-studio-key
 	GEMINI_TEXT_MODEL=gemini-2.5-flash
 	GEMINI_VISION_MODEL=gemini-2.5-pro
@@ -39,19 +39,34 @@ Backend skeleton in Go following Clean Architecture conventions to fan-out reque
 
 ### Makefile targets (if `make` is available)
 ```bash
+make tools   # installs swag + protobuf plugins once
 make build   # builds bin/ai-aggregator
 make run     # runs cmd/server with go run
 make test    # executes go test ./...
 make lint    # runs go vet ./...
 make swagger # regenerates api/docs via swag init
+make proto   # regenerates gRPC stubs (protoc required)
+
+### gRPC server runtime
+
+- The gRPC server boots automatically when `GRPC_ENABLED=true` (default) and listens on `GRPC_PORT` (`9090`).
+- Disable it by setting `GRPC_ENABLED=false` or change the port via `.env`/environment variables.
+- Use any gRPC client (for example `grpcurl -plaintext localhost:9090 list aione.v1.PublicService`) to inspect the services. Auth-required RPCs expect an `Authorization: Bearer <access_token>` header, matching the HTTP APIs.
+- When you run `docker compose up`, both `HTTP_PORT` and `GRPC_PORT` are published from the same `.env`, so customize those values before starting the stack if you need different host ports.
 ```
 
 ### API documentation
 
-- Swagger UI now ships directly with the binary at [`/docs/`](http://localhost:8080/docs/). The handler proxies every request through `github.com/swaggo/http-swagger`, so `/docs/doc.json` always reflects the generated spec.
-- Specs are generated from inline annotations via [swaggo/swag](https://github.com/swaggo/swag). Install the CLI once per workstation: `go install github.com/swaggo/swag/cmd/swag@v1.16.3`.
+- Swagger UI now ships directly with the binary at [`/docs/`](http://localhost:8089/docs/). The handler proxies every request through `github.com/swaggo/http-swagger`, so `/docs/doc.json` always reflects the generated spec.
+- Specs are generated from inline annotations via [swaggo/swag](https://github.com/swaggo/swag). Run `make tools` once to install the pinned CLI (`swag@v1.16.3`) together with the protobuf plugins under your `GOBIN`/`GOPATH/bin`.
 - Run `make swagger` (or `go generate ./cmd/server`) whenever you change handlers/comments. The command refreshes `api/docs/docs.go`, `swagger.json`, and `swagger.yaml`, which are all checked into git so CI/CD and Docker builds work without extra tooling.
 - Consumers that still prefer a raw spec can download `api/docs/swagger.yaml` directly from the repo. At runtime, `/docs/doc.json` exposes the same data for clients that need a machine-readable contract.
+
+### Protobuf / gRPC code generation
+
+- Execute `make tools` once to install `protoc-gen-go` (`v1.34.2`) and `protoc-gen-go-grpc` (`v1.5.1`) in your Go bin directory so `protoc` can find them.
+- Run `make proto` to regenerate the stubs under `api/grpc`. The target expects the `protoc` binary at `.tools/protoc/bin/protoc` by default—override the path via `make PROTOC_BIN=/custom/protoc proto` if you keep it elsewhere.
+- If you still need the compiler itself, download the official archive for your platform from the [protobuf releases](https://github.com/protocolbuffers/protobuf/releases), extract it, and point `PROTOC_BIN` at the resulting `bin/protoc`.
 
 ### One `.env` for every run mode
 
@@ -89,7 +104,7 @@ Gemini edits now follow the AI Studio workaround internally:
 
 Ensure your Google AI Studio key has access to both models. You can still override `GEMINI_VISION_MODEL` in `.env` to pick a different rewrite model; the preview step remains pinned to `gemini-3-pro-image-preview` until Google re-enables direct edit APIs.
 
-The server listens on `HTTP_PORT` (defaults to `8080`). Visit `http://localhost:8080/healthz` to check aggregated provider health. When both `OPENAI_API_KEY` and `GEMINI_API_KEY` are provided, `/v1/providers` lists each adapter with its capability matrix so you can drive routing strategies via `?strategy=`.
+The server listens on `HTTP_PORT` (defaults to `8089`). Visit `http://localhost:8089/healthz` to check aggregated provider health. When both `OPENAI_API_KEY` and `GEMINI_API_KEY` are provided, `/v1/providers` lists each adapter with its capability matrix so you can drive routing strategies via `?strategy=`.
 
 ### Live provider verification
 
@@ -289,7 +304,7 @@ docker build -f Dockerfile.windows -t aione-api-win .
 docker run --env-file .env `
 	-e DATABASE_URL=postgres://aione:aione@192.168.1.232:5432/aione?sslmode=disable `
 	-e REDIS_ADDR=192.168.1.232:6379 `
-	-p 8080:8080 aione-api-win
+	-p 8089:8089 aione-api-win
 ```
 
 Add any other env vars (`GEMINI_API_KEY`, `OPENAI_API_KEY`, etc.) via `--env-file` or individual `-e` flags.

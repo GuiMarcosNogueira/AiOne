@@ -11,7 +11,7 @@ FROM gcr.io/distroless/base-debian12
 WORKDIR /app
 COPY --from=build /app/bin/ai-aggregator ./ai-aggregator
 COPY --from=build --chown=nonroot:nonroot /app/storage /app/storage
-EXPOSE 8080
+EXPOSE 8089
 USER nonroot:nonroot
-ENV HTTP_PORT=8080
+ENV HTTP_PORT=8089
 CMD ["/app/ai-aggregator"]
