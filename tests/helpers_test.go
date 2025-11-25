@@ -34,6 +34,10 @@ func (s *stubProvider) ImageGenerate(ctx context.Context, req dto.ImageReq) (dto
 	return dto.ImageResp{}, nil
 }
 
+func (s *stubProvider) ImageEdit(ctx context.Context, req dto.ImageEditReq) (dto.ImageResp, error) {
+	return dto.ImageResp{}, nil
+}
+
 func (s *stubProvider) VideoGenerate(ctx context.Context, req dto.VideoReq) (dto.VideoResp, error) {
 	if s.videoErr != nil {
 		return dto.VideoResp{}, s.videoErr

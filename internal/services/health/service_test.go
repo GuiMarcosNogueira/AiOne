@@ -50,6 +50,10 @@ func (f *fakeProvider) ImageGenerate(ctx context.Context, req dto.ImageReq) (dto
 	return dto.ImageResp{}, nil
 }
 
+func (f *fakeProvider) ImageEdit(ctx context.Context, req dto.ImageEditReq) (dto.ImageResp, error) {
+	return dto.ImageResp{}, nil
+}
+
 func (f *fakeProvider) VideoGenerate(ctx context.Context, req dto.VideoReq) (dto.VideoResp, error) {
 	return dto.VideoResp{}, nil
 }

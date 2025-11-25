@@ -1,8 +1,21 @@
+//go:generate swag init -g main.go -o ../api/docs --outputTypes go,json,yaml
+
+// @title           AiOne API
+// @version         1.0
+// @description     Unified AI gateway that proxies multiple providers.
+// @BasePath        /
+// @schemes         http https
+// @accept          json
+// @produce         json
+// @securityDefinitions.apikey BearerAuth
+// @in              header
+// @name            Authorization
 package main
 
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -10,26 +23,87 @@ import (
 	"strings"
 	"syscall"
 
+	_ "github.com/midia/aione/api/docs"
 	apihandlers "github.com/midia/aione/api/handlers"
 	"github.com/midia/aione/internal/core/config"
+	"github.com/midia/aione/internal/core/db"
 	"github.com/midia/aione/internal/core/logger"
+	"github.com/midia/aione/internal/core/redisclient"
 	"github.com/midia/aione/internal/providers"
 	geminiprovider "github.com/midia/aione/internal/providers/gemini"
 	generichttpprovider "github.com/midia/aione/internal/providers/generichttp"
 	mockproviders "github.com/midia/aione/internal/providers/mock"
 	openaiprovider "github.com/midia/aione/internal/providers/openai"
+	"github.com/midia/aione/internal/services/assets"
+	"github.com/midia/aione/internal/services/auth"
 	healthsvc "github.com/midia/aione/internal/services/health"
+	"github.com/midia/aione/internal/services/history"
 	providermanager "github.com/midia/aione/internal/services/provider"
+	"github.com/midia/aione/internal/services/providersessions"
+	"github.com/midia/aione/internal/services/session"
+	"github.com/midia/aione/internal/services/storage"
+	"github.com/midia/aione/internal/services/users"
+	httpmiddleware "github.com/midia/aione/pkg/http/middleware"
 	httprouter "github.com/midia/aione/pkg/http/router"
 )
 
 var notifyContext = signal.NotifyContext
 
+type authComponents struct {
+	AuthAPI    *apihandlers.AuthAPI
+	SessionAPI *apihandlers.ProviderSessionAPI
+	HistoryAPI *apihandlers.HistoryAPI
+	HistorySvc *history.Service
+	SessionSvc *providersessions.Service
+	Middleware func(http.Handler) http.Handler
+}
+
 func main() {
 	cfg := config.Load()
 	log := logger.New(cfg.LogLevel)
 
-	log.Info("starting AI aggregator backend")
+	log.Info("starting AiOne backend")
+
+	var assetStorage storage.Storage
+	var mediaHandler http.Handler
+	if dir := strings.TrimSpace(cfg.Storage.UploadDir); dir != "" {
+		assetStorage = storage.NewLocal(dir)
+		if cfg.Storage.ServeFromAPI {
+			mediaHandler = http.StripPrefix("/media/", http.FileServer(http.Dir(dir)))
+		} else {
+			log.Info("media files served by external storage", "public_base_url", cfg.Storage.PublicBaseURL)
+		}
+	} else {
+		log.Warn("asset storage disabled", "reason", "missing upload dir")
+	}
+	assetService := assets.NewService(log, assetStorage, cfg.Storage.PublicBaseURL)
+
+	modules, cleanupAuth, err := initAuth(context.Background(), log, cfg)
+	if err != nil {
+		log.Error("auth initialization failed", "error", err)
+		return
+	}
+	if cleanupAuth != nil {
+		defer cleanupAuth()
+	}
+
+	var authHandlers *apihandlers.AuthAPI
+	var sessionHandler http.Handler
+	var historyHandler http.Handler
+	var historySvc *history.Service
+	var conversationHandler http.Handler
+	var authMiddleware func(http.Handler) http.Handler
+	if modules != nil {
+		authHandlers = modules.AuthAPI
+		if modules.SessionAPI != nil {
+			sessionHandler = modules.SessionAPI.Handler()
+		}
+		if modules.HistoryAPI != nil {
+			historyHandler = modules.HistoryAPI.Handler()
+		}
+		historySvc = modules.HistorySvc
+		authMiddleware = modules.Middleware
+	}
 
 	providersSet := registerProviders(cfg, log)
 	managerOpts := []providermanager.Option{
@@ -52,15 +126,31 @@ func main() {
 			managerOpts = append(managerOpts, providermanager.WithCache(redisCache, cacheCfg.TTL))
 		}
 	}
+	if cfg.Logging.ProviderCalls {
+		managerOpts = append(managerOpts, providermanager.WithProviderLogging(log, true))
+	}
 	providerManager := providermanager.NewManager(providersSet, managerOpts...)
-	apiHandlers := apihandlers.New(log, providerManager)
+	apiHandlers := apihandlers.New(log, providerManager, historySvc, assetService)
+
+	if modules != nil && modules.SessionSvc != nil && historySvc != nil {
+		conversationSvc, err := session.NewService(log, providerManager, modules.SessionSvc, historySvc, assetService)
+		if err != nil {
+			log.Error("failed to initialize session conversation service", "error", err)
+		} else {
+			conversationHandler = apihandlers.NewSessionAPI(log, conversationSvc).Handler()
+		}
+	}
 
 	healthService := healthsvc.NewService(providersSet)
-	router := httprouter.New(log, healthService, apiHandlers)
+	router := httprouter.New(log, healthService, apiHandlers, authHandlers, sessionHandler, historyHandler, conversationHandler, mediaHandler, authMiddleware)
+	handler := http.Handler(router)
+	if cfg.Logging.HTTPRequests {
+		handler = httpmiddleware.RequestLogger(log, httpmiddleware.RequestLogOptions{})(handler)
+	}
 
 	srv := &http.Server{
 		Addr:    ":" + cfg.HTTPPort,
-		Handler: router,
+		Handler: handler,
 	}
 
 	go func() {
@@ -93,9 +183,10 @@ func registerProviders(cfg config.Config, log *slog.Logger) []providers.Provider
 	} else {
 		prov, err := openaiprovider.NewProvider(openaiprovider.Config{
 			APIKey:             cfg.OpenAI.APIKey,
-			BaseURL:            cfg.OpenAI.BaseURL,
 			ChatModel:          cfg.OpenAI.ChatModel,
 			ImageModel:         cfg.OpenAI.ImageModel,
+			VideoModel:         cfg.OpenAI.VideoModel,
+			VideoSize:          cfg.OpenAI.VideoSize,
 			TranscriptionModel: cfg.OpenAI.TranscriptionModel,
 			EmbeddingsModel:    cfg.OpenAI.EmbeddingsModel,
 			ModerationModel:    cfg.OpenAI.ModerationModel,
@@ -112,7 +203,6 @@ func registerProviders(cfg config.Config, log *slog.Logger) []providers.Provider
 	} else {
 		prov, err := geminiprovider.NewProvider(geminiprovider.Config{
 			APIKey:             cfg.Gemini.APIKey,
-			BaseURL:            cfg.Gemini.BaseURL,
 			TextModel:          cfg.Gemini.TextModel,
 			VisionModel:        cfg.Gemini.VisionModel,
 			ImageModel:         cfg.Gemini.ImageModel,
@@ -120,7 +210,6 @@ func registerProviders(cfg config.Config, log *slog.Logger) []providers.Provider
 			TranscriptionModel: cfg.Gemini.TranscriptionModel,
 			EmbeddingsModel:    cfg.Gemini.EmbeddingsModel,
 			Timeout:            cfg.Gemini.Timeout,
-			MaxRetries:         cfg.Gemini.MaxRetries,
 			MaxUploadMB:        cfg.Gemini.MaxUploadMB,
 			AllowedMIMETypes:   cfg.Gemini.AllowedMIMETypes,
 		})
@@ -144,4 +233,115 @@ func registerProviders(cfg config.Config, log *slog.Logger) []providers.Provider
 		}
 	}
 	return list
+}
+
+func initAuth(ctx context.Context, log *slog.Logger, cfg config.Config) (*authComponents, func(), error) {
+	missing := []string{}
+	if strings.TrimSpace(cfg.Database.URL) == "" {
+		missing = append(missing, "DATABASE_URL")
+	}
+	if cfg.Auth.AccessSecret == "" {
+		missing = append(missing, "AUTH_ACCESS_SECRET")
+	}
+	if cfg.Auth.RefreshSecret == "" {
+		missing = append(missing, "AUTH_REFRESH_SECRET")
+	}
+	if cfg.Auth.SessionRedis.Addr == "" {
+		missing = append(missing, "AUTH_SESSION_REDIS_ADDR")
+	}
+	if len(missing) > 0 {
+		log.Warn("auth module disabled due to missing configuration", "fields", strings.Join(missing, ","))
+		return nil, nil, nil
+	}
+
+	dbConn, err := db.Connect(ctx, cfg.Database.URL)
+	if err != nil {
+		return nil, nil, fmt.Errorf("connect database: %w", err)
+	}
+	cleanupFns := []func(){func() { dbConn.Close() }}
+
+	userRepo := users.NewPostgresRepository(dbConn)
+	hasher := auth.NewHasher(cfg.Auth.Argon.Memory, cfg.Auth.Argon.Iterations, cfg.Auth.Argon.SaltLength, cfg.Auth.Argon.KeyLength, cfg.Auth.Argon.Parallelism)
+	tokenManager, err := auth.NewTokenManager(cfg.Auth.AccessSecret, cfg.Auth.RefreshSecret)
+	if err != nil {
+		runCleanup(cleanupFns)
+		return nil, nil, fmt.Errorf("token manager: %w", err)
+	}
+	sessionClient, err := redisclient.Connect(redisclient.Config{
+		Addr:     cfg.Auth.SessionRedis.Addr,
+		Password: cfg.Auth.SessionRedis.Password,
+		DB:       cfg.Auth.SessionRedis.DB,
+	})
+	if err != nil {
+		runCleanup(cleanupFns)
+		return nil, nil, fmt.Errorf("session redis: %w", err)
+	}
+	cleanupFns = append(cleanupFns, func() { sessionClient.Close() })
+	sessionStore, err := auth.NewSessionStore(sessionClient, cfg.Auth.SessionPrefix)
+	if err != nil {
+		runCleanup(cleanupFns)
+		return nil, nil, fmt.Errorf("session store: %w", err)
+	}
+
+	authService, err := auth.NewService(userRepo, hasher, tokenManager, sessionStore, cfg.Auth.AccessTTL, cfg.Auth.RefreshTTL)
+	if err != nil {
+		runCleanup(cleanupFns)
+		return nil, nil, fmt.Errorf("auth service: %w", err)
+	}
+
+	var rateLimiter *auth.RateLimiter
+	if cfg.Auth.RateLimit.Redis.Addr != "" && cfg.Auth.RateLimit.MaxAttempts > 0 {
+		rateLimiterClient, err := redisclient.Connect(redisclient.Config{
+			Addr:     cfg.Auth.RateLimit.Redis.Addr,
+			Password: cfg.Auth.RateLimit.Redis.Password,
+			DB:       cfg.Auth.RateLimit.Redis.DB,
+		})
+		if err != nil {
+			log.Error("failed to connect rate limit redis", "error", err)
+		} else {
+			cleanupFns = append(cleanupFns, func() { rateLimiterClient.Close() })
+			rateLimiter, err = auth.NewRateLimiter(rateLimiterClient, cfg.Auth.RateLimit.Window, cfg.Auth.RateLimit.MaxAttempts)
+			if err != nil {
+				log.Error("failed to initialize rate limiter", "error", err)
+			}
+		}
+	}
+
+	cleanup := func() { runCleanup(cleanupFns) }
+	var sessionAPI *apihandlers.ProviderSessionAPI
+	var sessionSvc *providersessions.Service
+	var historyAPI *apihandlers.HistoryAPI
+	var historySvc *history.Service
+	sessionRepo := providersessions.NewPostgresRepository(dbConn)
+	sessionService, err := providersessions.NewService(sessionRepo)
+	if err != nil {
+		log.Error("failed to initialize provider session service", slog.Any("error", err))
+	} else {
+		sessionSvc = sessionService
+		sessionAPI = apihandlers.NewProviderSessionAPI(log, sessionService)
+	}
+	historyRepo := history.NewPostgresRepository(dbConn)
+	storageBackend := storage.NewLocal(cfg.Storage.UploadDir)
+	historySvc, err = history.NewService(historyRepo, storageBackend)
+	if err != nil {
+		log.Error("failed to initialize history service", slog.Any("error", err))
+	} else {
+		historyAPI = apihandlers.NewHistoryAPI(log, historySvc)
+	}
+
+	components := &authComponents{
+		AuthAPI:    apihandlers.NewAuthAPI(log, authService, rateLimiter),
+		SessionAPI: sessionAPI,
+		HistoryAPI: historyAPI,
+		HistorySvc: historySvc,
+		SessionSvc: sessionSvc,
+		Middleware: auth.AuthMiddleware(tokenManager),
+	}
+	return components, cleanup, nil
+}
+
+func runCleanup(funcs []func()) {
+	for _, fn := range funcs {
+		fn()
+	}
 }

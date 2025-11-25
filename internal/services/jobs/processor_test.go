@@ -272,6 +272,10 @@ func (f *fakeProvider) TextGenerate(ctx context.Context, req dto.TextReq) (dto.T
 func (f *fakeProvider) ImageGenerate(ctx context.Context, req dto.ImageReq) (dto.ImageResp, error) {
 	return dto.ImageResp{}, nil
 }
+
+func (f *fakeProvider) ImageEdit(ctx context.Context, req dto.ImageEditReq) (dto.ImageResp, error) {
+	return dto.ImageResp{}, nil
+}
 func (f *fakeProvider) VideoGenerate(ctx context.Context, req dto.VideoReq) (dto.VideoResp, error) {
 	f.lastVideoReq = req
 	if f.err != nil {

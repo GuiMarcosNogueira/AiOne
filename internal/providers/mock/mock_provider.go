@@ -29,6 +29,7 @@ func (p *Provider) Capabilities() providers.Capabilities {
 	return providers.Capabilities{
 		TextGeneration:  true,
 		ImageGeneration: true,
+		ImageEditing:    true,
 		VideoGeneration: true,
 		SpeechToText:    true,
 		TextToSpeech:    true,
@@ -54,6 +55,10 @@ func (p *Provider) TextGenerate(ctx context.Context, req dto.TextReq) (dto.TextR
 
 func (p *Provider) ImageGenerate(ctx context.Context, req dto.ImageReq) (dto.ImageResp, error) {
 	return dto.ImageResp{URL: fmt.Sprintf("https://mock.%s/images/%d", p.name, time.Now().Unix())}, nil
+}
+
+func (p *Provider) ImageEdit(ctx context.Context, req dto.ImageEditReq) (dto.ImageResp, error) {
+	return dto.ImageResp{URL: fmt.Sprintf("https://mock.%s/images/edited/%d", p.name, time.Now().Unix())}, nil
 }
 
 func (p *Provider) VideoGenerate(ctx context.Context, req dto.VideoReq) (dto.VideoResp, error) {

@@ -1,11 +1,13 @@
 package handlers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,6 +16,7 @@ import (
 	"github.com/midia/aione/internal/providers"
 	"github.com/midia/aione/internal/providers/dto"
 	mockproviders "github.com/midia/aione/internal/providers/mock"
+	"github.com/midia/aione/internal/services/assets"
 	providermanager "github.com/midia/aione/internal/services/provider"
 )
 
@@ -74,6 +77,46 @@ func TestChatUnknownProviderReturnsBadRequest(t *testing.T) {
 	}
 }
 
+func TestImageEditJSONPayload(t *testing.T) {
+	api := newTestAPI()
+	body := `{"prompt":"edit","image_base64":"ZGF0YQ=="}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/image/edit", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	api.ImageEdit(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestImageEditMultipartPayload(t *testing.T) {
+	api := newTestAPI()
+	buf := &bytes.Buffer{}
+	writer := multipart.NewWriter(buf)
+	if err := writer.WriteField("prompt", "blend"); err != nil {
+		t.Fatalf("write prompt: %v", err)
+	}
+	fileWriter, err := writer.CreateFormFile("image_file", "photo.png")
+	if err != nil {
+		t.Fatalf("create file: %v", err)
+	}
+	if _, err := fileWriter.Write([]byte("png")); err != nil {
+		t.Fatalf("write file: %v", err)
+	}
+	writer.Close()
+	req := httptest.NewRequest(http.MethodPost, "/v1/image/edit", buf)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	rec := httptest.NewRecorder()
+
+	api.ImageEdit(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
 func TestHandleErrorMappings(t *testing.T) {
 	api := newTestAPI()
 	testCases := []struct {
@@ -84,6 +127,7 @@ func TestHandleErrorMappings(t *testing.T) {
 		{providermanager.ErrCapabilityUnavailable, http.StatusNotImplemented},
 		{providermanager.ErrRateLimited, http.StatusTooManyRequests},
 		{providermanager.ErrCircuitOpen, http.StatusServiceUnavailable},
+		{assets.ErrPersistence, http.StatusInternalServerError},
 		{errors.New("boom"), http.StatusInternalServerError},
 	}
 	for _, tc := range testCases {
@@ -132,8 +176,69 @@ func TestProvidersMethodNotAllowed(t *testing.T) {
 	}
 }
 
+func TestModelsEndpointProviderQuery(t *testing.T) {
+	provider := newCatalogProvider("catalog")
+	manager := providermanager.NewManager([]providers.Provider{provider})
+	api := New(testLogger(), manager, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/models?provider=catalog", nil)
+	rec := httptest.NewRecorder()
+
+	api.Models(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var payload struct {
+		Data struct {
+			Provider string                      `json:"provider"`
+			Models   []providers.ModelDescriptor `json:"models"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if payload.Data.Provider != "catalog" || len(payload.Data.Models) == 0 {
+		t.Fatalf("expected models for provider, got %+v", payload.Data)
+	}
+}
+
+func TestModelsEndpointAllProviders(t *testing.T) {
+	provider := newCatalogProvider("catalog")
+	manager := providermanager.NewManager([]providers.Provider{provider})
+	api := New(testLogger(), manager, nil, nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+	rec := httptest.NewRecorder()
+
+	api.Models(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	var payload struct {
+		Data map[string][]providers.ModelDescriptor `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(payload.Data["catalog"]) == 0 {
+		t.Fatalf("expected catalog models, got %+v", payload.Data)
+	}
+}
+
+func TestModelsEndpointUnavailableCatalog(t *testing.T) {
+	api := newTestAPI()
+	req := httptest.NewRequest(http.MethodGet, "/v1/models?provider=mock-openai", nil)
+	rec := httptest.NewRecorder()
+
+	api.Models(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for missing catalog, got %d", rec.Code)
+	}
+}
+
 func TestHandlePostErrorFlow(t *testing.T) {
-	api := New(testLogger(), nil)
+	api := New(testLogger(), nil, nil, nil)
 	req := httptest.NewRequest(http.MethodPost, "/v1/test", strings.NewReader(`{"prompt":"p"}`))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -169,7 +274,63 @@ func newTestAPI() *API {
 	log := testLogger()
 	providers := []providers.Provider{mockproviders.New("mock-openai")}
 	manager := providermanager.NewManager(providers)
-	return New(log, manager)
+	return New(log, manager, nil, nil)
+}
+
+type catalogProvider struct {
+	base   providers.Provider
+	models []providers.ModelDescriptor
+}
+
+func newCatalogProvider(name string) *catalogProvider {
+	return &catalogProvider{
+		base: mockproviders.New(name),
+		models: []providers.ModelDescriptor{
+			{Provider: name, Name: "test-model", Capability: providers.CapabilityText, Default: true},
+		},
+	}
+}
+
+func (c *catalogProvider) ListModels(ctx context.Context) ([]providers.ModelDescriptor, error) {
+	return c.models, nil
+}
+
+func (c *catalogProvider) Name() string { return c.base.Name() }
+
+func (c *catalogProvider) Capabilities() providers.Capabilities { return c.base.Capabilities() }
+
+func (c *catalogProvider) Health(ctx context.Context) error { return c.base.Health(ctx) }
+
+func (c *catalogProvider) TextGenerate(ctx context.Context, req dto.TextReq) (dto.TextResp, error) {
+	return c.base.TextGenerate(ctx, req)
+}
+
+func (c *catalogProvider) ImageGenerate(ctx context.Context, req dto.ImageReq) (dto.ImageResp, error) {
+	return c.base.ImageGenerate(ctx, req)
+}
+
+func (c *catalogProvider) ImageEdit(ctx context.Context, req dto.ImageEditReq) (dto.ImageResp, error) {
+	return c.base.ImageEdit(ctx, req)
+}
+
+func (c *catalogProvider) VideoGenerate(ctx context.Context, req dto.VideoReq) (dto.VideoResp, error) {
+	return c.base.VideoGenerate(ctx, req)
+}
+
+func (c *catalogProvider) SpeechToText(ctx context.Context, req dto.STTReq) (dto.STTResp, error) {
+	return c.base.SpeechToText(ctx, req)
+}
+
+func (c *catalogProvider) TextToSpeech(ctx context.Context, req dto.TTSReq) (dto.TTSResp, error) {
+	return c.base.TextToSpeech(ctx, req)
+}
+
+func (c *catalogProvider) Embeddings(ctx context.Context, req dto.EmbeddingsReq) (dto.EmbeddingsResp, error) {
+	return c.base.Embeddings(ctx, req)
+}
+
+func (c *catalogProvider) Moderation(ctx context.Context, req dto.ModerationReq) (dto.ModerationResp, error) {
+	return c.base.Moderation(ctx, req)
 }
 
 func testLogger() *slog.Logger {

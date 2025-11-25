@@ -27,6 +27,7 @@ type httpClient interface {
 const (
 	endpointText       endpointKind = "text"
 	endpointImage      endpointKind = "image"
+	endpointImageEdit  endpointKind = "image_edit"
 	endpointVideo      endpointKind = "video"
 	endpointSTT        endpointKind = "stt"
 	endpointTTS        endpointKind = "tts"
@@ -85,6 +86,9 @@ func NewFromConfig(cfg FileConfig, opts ...Option) (providers.Provider, error) {
 	}
 	if err := p.registerEndpoint(endpointImage, cfg.Endpoints.Image); err != nil {
 		return nil, fmt.Errorf("configure image endpoint: %w", err)
+	}
+	if err := p.registerEndpoint(endpointImageEdit, cfg.Endpoints.ImageEdit); err != nil {
+		return nil, fmt.Errorf("configure image edit endpoint: %w", err)
 	}
 	if err := p.registerEndpoint(endpointVideo, cfg.Endpoints.Video); err != nil {
 		return nil, fmt.Errorf("configure video endpoint: %w", err)
@@ -155,7 +159,7 @@ func (p *Provider) Health(ctx context.Context) error {
 		return err
 	}
 	p.applyHeaders(req, nil)
-	p.applyAuth(req)
+	p.applyAuth(ctx, req)
 	resp, err := p.httpClient.Do(req)
 	if err != nil {
 		return err
@@ -184,6 +188,18 @@ func (p *Provider) TextGenerate(ctx context.Context, req dto.TextReq) (dto.TextR
 
 func (p *Provider) ImageGenerate(ctx context.Context, req dto.ImageReq) (dto.ImageResp, error) {
 	result, err := p.invoke(ctx, endpointImage, req)
+	if err != nil {
+		return dto.ImageResp{}, err
+	}
+	url, err := extractString(result.data, result.mapping.URLPath)
+	if err != nil {
+		return dto.ImageResp{}, err
+	}
+	return dto.ImageResp{URL: url}, nil
+}
+
+func (p *Provider) ImageEdit(ctx context.Context, req dto.ImageEditReq) (dto.ImageResp, error) {
+	result, err := p.invoke(ctx, endpointImageEdit, req)
 	if err != nil {
 		return dto.ImageResp{}, err
 	}
@@ -314,7 +330,7 @@ func (h *endpointHandler) call(ctx context.Context, p *Provider, req any) (any, 
 	if contentType != "" {
 		httpReq.Header.Set("Content-Type", contentType)
 	}
-	p.applyAuth(httpReq)
+	p.applyAuth(reqCtx, httpReq)
 
 	resp, err := p.httpClient.Do(httpReq)
 	if err != nil {
@@ -398,8 +414,44 @@ func (p *Provider) applyHeaders(req *http.Request, extra map[string]string) {
 	}
 }
 
-func (p *Provider) applyAuth(req *http.Request) {
+func (p *Provider) applyAuth(ctx context.Context, req *http.Request) {
 	authType := strings.ToLower(strings.TrimSpace(p.auth.Type))
+	override := strings.TrimSpace(providers.APIKeyFromContext(ctx))
+	if override != "" {
+		switch authType {
+		case "bearer":
+			prefix := strings.TrimSpace(p.auth.Prefix)
+			if prefix == "" {
+				prefix = "Bearer"
+			}
+			req.Header.Set("Authorization", fmt.Sprintf("%s %s", prefix, override))
+		case "apikey", "api_key":
+			location := strings.ToLower(strings.TrimSpace(p.auth.In))
+			name := p.auth.Name
+			if name == "" {
+				name = "X-API-Key"
+			}
+			value := strings.TrimSpace(strings.Join([]string{strings.TrimSpace(p.auth.Prefix), override}, " "))
+			if location == "query" {
+				q := req.URL.Query()
+				q.Set(name, value)
+				req.URL.RawQuery = q.Encode()
+			} else {
+				req.Header.Set(name, value)
+			}
+		case "basic":
+			parts := strings.SplitN(override, ":", 2)
+			username := parts[0]
+			password := ""
+			if len(parts) > 1 {
+				password = parts[1]
+			}
+			req.SetBasicAuth(username, password)
+		default:
+			req.Header.Set("Authorization", override)
+		}
+		return
+	}
 	switch authType {
 	case "bearer":
 		token := p.auth.resolveValue()
@@ -422,7 +474,6 @@ func (p *Provider) applyAuth(req *http.Request) {
 			name = "X-API-Key"
 		}
 		value = strings.TrimSpace(strings.Join([]string{strings.TrimSpace(p.auth.Prefix), value}, " "))
-		value = strings.TrimSpace(value)
 		if location == "query" {
 			q := req.URL.Query()
 			q.Set(name, value)

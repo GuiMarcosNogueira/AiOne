@@ -21,23 +21,33 @@ func TestLoadUsesDefaults(t *testing.T) {
 	t.Setenv("CACHE_TTL", "")
 	t.Setenv("DATABASE_URL", "")
 	t.Setenv("UPLOAD_DIR", "")
+	t.Setenv("STORAGE_PUBLIC_BASE_URL", "")
+	t.Setenv("STORAGE_SERVE_FROM_API", "")
 	t.Setenv("JOBS_WORKER_INTERVAL", "")
 	t.Setenv("JOBS_CALLBACK_MAX_ATTEMPTS", "")
 	t.Setenv("JOBS_CALLBACK_BACKOFF", "")
 	t.Setenv("JOBS_UPLOAD_MAX_MB", "")
+	t.Setenv("LOG_HTTP_REQUESTS", "")
+	t.Setenv("LOG_PROVIDER_CALLS", "")
 
 	cfg := Load()
 	if cfg.HTTPPort != "8080" {
 		t.Fatalf("expected default http port, got %s", cfg.HTTPPort)
-	}
-	if cfg.OpenAI.BaseURL != "https://api.openai.com/v1" {
-		t.Fatalf("unexpected default openai base url: %s", cfg.OpenAI.BaseURL)
 	}
 	if cfg.ProviderManager.FailoverAttempts != 3 {
 		t.Fatalf("expected default failover attempts 3, got %d", cfg.ProviderManager.FailoverAttempts)
 	}
 	if cfg.Storage.UploadDir != "storage" {
 		t.Fatalf("expected default upload dir, got %s", cfg.Storage.UploadDir)
+	}
+	if cfg.Storage.PublicBaseURL != "" {
+		t.Fatalf("expected empty public base url by default")
+	}
+	if !cfg.Storage.ServeFromAPI {
+		t.Fatalf("expected local media handler enabled by default")
+	}
+	if cfg.Logging.HTTPRequests || cfg.Logging.ProviderCalls {
+		t.Fatalf("expected logging disabled by default")
 	}
 }
 
@@ -56,10 +66,14 @@ func TestLoadReadsEnvironment(t *testing.T) {
 	t.Setenv("CACHE_TTL", "10")
 	t.Setenv("DATABASE_URL", "postgres://example")
 	t.Setenv("UPLOAD_DIR", "uploads")
+	t.Setenv("STORAGE_PUBLIC_BASE_URL", "https://cdn.example.com/media")
+	t.Setenv("STORAGE_SERVE_FROM_API", "false")
 	t.Setenv("JOBS_WORKER_INTERVAL", "4")
 	t.Setenv("JOBS_CALLBACK_MAX_ATTEMPTS", "9")
 	t.Setenv("JOBS_CALLBACK_BACKOFF", "6")
 	t.Setenv("JOBS_UPLOAD_MAX_MB", "500")
+	t.Setenv("LOG_HTTP_REQUESTS", "true")
+	t.Setenv("LOG_PROVIDER_CALLS", "true")
 
 	cfg := Load()
 	if cfg.HTTPPort != "9090" || cfg.LogLevel != "debug" {
@@ -95,6 +109,12 @@ func TestLoadReadsEnvironment(t *testing.T) {
 	if cfg.Storage.UploadDir != "uploads" {
 		t.Fatalf("expected upload dir override")
 	}
+	if cfg.Storage.PublicBaseURL != "https://cdn.example.com/media" {
+		t.Fatalf("expected public base url override")
+	}
+	if cfg.Storage.ServeFromAPI {
+		t.Fatalf("expected storage serve flag override")
+	}
 	if cfg.Jobs.WorkerInterval != 4*time.Second {
 		t.Fatalf("expected worker interval override")
 	}
@@ -106,6 +126,9 @@ func TestLoadReadsEnvironment(t *testing.T) {
 	}
 	if cfg.Jobs.UploadMaxMB != 500 {
 		t.Fatalf("expected upload size override")
+	}
+	if !cfg.Logging.HTTPRequests || !cfg.Logging.ProviderCalls {
+		t.Fatalf("expected logging flags from env")
 	}
 }
 
